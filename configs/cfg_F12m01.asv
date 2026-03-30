@@ -1,0 +1,32 @@
+function cfg = cfg_F12m01()
+% Configuration for dataset F12m01
+% refer to D:\Koopman_data\MatlabRD\Projects\NET\sesmonkeys\F12m01.m
+% Kaidi Shao, 20260325
+
+%% basic info
+cfg.dataset_id = 'F12.m01';
+cfg.raw_data_root = 'D:\DataPons\F12.m01\';
+
+%% channel selection
+cfg.channels.sites = {'pl', 'hp', 'hp', 'hp', 'NOS', 'pl', 'pl' ...
+                     'NOS','po', 'po', 'po', 'NOS', 'NOS', 'po', 'po', 'pbn', 'po' };
+cfg.channels.selected_labels = {'hp', 'pl'};
+cfg.chennels.selected_site1 = [2,3,4];
+cfg.chennels.selected_site2 = [1,6,7];
+cfg.chennels.selected_all = [2,3,4,1,6,7];
+cfg.defaults.include = true;
+
+%% session selection
+cfg.sessions = struct([]);
+
+cfg.sessions(1).session_id = [1:12];
+cfg.sessions(1).include = true;
+cfg.sessions(1).selected_channels = cfg.chennels.selected_all;
+cfg.sessions(1).notes = 'spont';
+
+cfg.sessions(2).session_id = [14:16];
+cfg.sessions(2).include = false;
+cfg.sessions(2).selected_channels = [];
+cfg.sessions(2).notes = 'inconsistent sampling rate (4 slices)';
+
+end

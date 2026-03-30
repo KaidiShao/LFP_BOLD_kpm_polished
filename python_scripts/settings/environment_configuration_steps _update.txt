@@ -1,0 +1,39 @@
+Attention: LINUX ONLY!!
+
+0. install VScode in windows (download .exe from official site)
+install WSL extension
+
+1. Windows Powershell: wsl --install
+
+2. Launch WSL: type 'Ubuntu'
+
+3. WSL terminal: sudo apt update && sudo apt upgrade -y
+
+4. Install Anaconda 
+cd ~
+wget https://repo.anaconda.com/archive/Anaconda3-2024.02-1-Linux-x86_64.sh
+bash Anaconda3-2024.02-1-Linux-x86_64.sh
+
+5. install necessary packages
+conda env create -f reskoopnet.yml -n yourname
+conda activate yourname
+
+6. install build-essential for installing the koopmanlib package
+sudo apt install build-essential
+
+7. install koopmanlib
+git clone https://github.com/MLDS-NUS/KoopmanDL.git
+cd KoopmanDL
+pip install -r requirements.txt
+pip install -e .
+
+8. for jupyter notebook:
+conda install ipykernel -y
+python -m ipykernel install --user \
+    --name=koopmandl \
+    --display-name="KoopmanDL (Python 3.8)"
+
+10. navigate to the GitHub Repo (fetch from origin):
+cd ...../active_inference_koopman
+code .
+
