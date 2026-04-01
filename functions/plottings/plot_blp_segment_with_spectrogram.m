@@ -1,4 +1,4 @@
-function hfig = plot_blp_segment_with_spectrogram(cfg, output_root, time_range_sec, cmap_in, freq_lim, clim)
+function hfig = plot_blp_segment_with_spectrogram(cfg, output_root, time_range_sec, cmap_in, freq_lim, clim, event_input, band_colors)
 % Plot raw BLP traces and saved region-mean spectrograms for a selected time range.
 
 %% =========================
@@ -22,6 +22,11 @@ end
 
 if nargin < 6
     clim = [];
+end
+
+show_events = (nargin >= 7);
+if show_events && nargin < 8
+    band_colors = [];
 end
 
 if numel(time_range_sec) ~= 2 || time_range_sec(2) <= time_range_sec(1)
@@ -73,6 +78,32 @@ end
 
 x_seg = double(D.data(raw_idx, :));
 t_seg = double(t_raw(raw_idx));
+idx_plot_1 = raw_idx(1);
+idx_plot_2 = raw_idx(end);
+
+%% =========================
+%  Load event data if requested
+%  =========================
+R_events = [];
+n_event_bands = 0;
+
+if show_events
+    R_events = load_event_results(cfg, output_root, event_input);
+    n_event_bands = size(R_events.DetectResults, 1);
+
+    if size(R_events.DetectResults, 2) ~= size(D.data, 2)
+        error('Event result channel count (%d) does not match loaded data (%d).', ...
+            size(R_events.DetectResults, 2), size(D.data, 2));
+    end
+
+    if isempty(band_colors)
+        band_colors = default_band_colors(n_event_bands);
+    end
+
+    if size(band_colors, 1) < n_event_bands || size(band_colors, 2) ~= 3
+        error('band_colors must be an N-by-3 array with at least one row per event band.');
+    end
+end
 
 %% =========================
 %  Locate saved spectrogram file
@@ -182,6 +213,39 @@ for c = 1:n_channels
     plot(ax1, t_seg, x_disp(:, c) + offsets(c), 'k', 'LineWidth', trace_linewidth);
 end
 
+if show_events
+    for c = 1:n_channels
+        for b = 1:n_event_bands
+            win = R_events.DetectResults{b, c}.event_win;
+
+            if isempty(win)
+                continue;
+            end
+
+            overlap_mask = win(:, 2) >= idx_plot_1 & win(:, 1) <= idx_plot_2;
+            win = win(overlap_mask, :);
+
+            for i = 1:size(win, 1)
+                g1 = max(win(i, 1), idx_plot_1);
+                g2 = min(win(i, 2), idx_plot_2);
+
+                if g2 < g1
+                    continue;
+                end
+
+                local1 = g1 - idx_plot_1 + 1;
+                local2 = g2 - idx_plot_1 + 1;
+
+                plot(ax1, ...
+                    t_seg(local1:local2), ...
+                    x_disp(local1:local2, c) + offsets(c), ...
+                    'Color', band_colors(b, :), ...
+                    'LineWidth', max(trace_linewidth, 1.0));
+            end
+        end
+    end
+end
+
 border_t_raw = double(t_raw(D.border_idx));
 border_t_raw = border_t_raw(border_t_raw >= t1 & border_t_raw <= t2);
 
@@ -189,7 +253,11 @@ for i = 1:numel(border_t_raw)
     xline(ax1, border_t_raw(i), '--', 'Color', [0.6 0.6 0.6], 'LineWidth', 0.8);
 end
 
-title(ax1, sprintf('Original Local Field Potential Signals: %.3f-%.3f s', t1, t2));
+if show_events
+    title(ax1, sprintf('Original Local Field Potential Signals with Detected Events: %.3f-%.3f s', t1, t2));
+else
+    title(ax1, sprintf('Original Local Field Potential Signals: %.3f-%.3f s', t1, t2));
+end
 xlim(ax1, [t1, t2]);
 ylim(ax1, [ytick_pos(1) - 1, ytick_pos(end) + 1]);
 set(ax1, 'YTick', ytick_pos, 'YTickLabel', ytick_labels);
@@ -197,6 +265,23 @@ set(ax1, 'Box', 'off');
 
 if n_regions >= 1
     set(ax1, 'XTickLabel', []);
+end
+
+if show_events
+    legend_handles = gobjects(n_event_bands, 1);
+    legend_labels = cell(n_event_bands, 1);
+
+    for b = 1:n_event_bands
+        legend_handles(b) = plot(ax1, nan, nan, 'Color', band_colors(b, :), 'LineWidth', 1.4);
+
+        if isfield(R_events, 'params') && isfield(R_events.params, 'band_labels') && numel(R_events.params.band_labels) >= b
+            legend_labels{b} = R_events.params.band_labels{b};
+        else
+            legend_labels{b} = sprintf('Band %d', b);
+        end
+    end
+
+    legend(ax1, legend_handles, legend_labels, 'Location', 'northeast', 'Box', 'off');
 end
 
 %% =========================
@@ -338,5 +423,82 @@ elseif isnumeric(cmap_in)
     colormap(ax, cmap_in);
 else
     error('Unsupported colormap input.');
+end
+end
+
+
+function R = load_event_results(cfg, output_root, event_input)
+% Load saved event-detection results from a struct or file.
+
+if isempty(event_input)
+    event_input = [];
+end
+
+if isstruct(event_input)
+    if isfield(event_input, 'DetectResults')
+        R = event_input;
+        return;
+    end
+    error('event_input struct must contain DetectResults.');
+end
+
+if ischar(event_input) || isstring(event_input)
+    S = load(char(event_input));
+    if ~isfield(S, 'R')
+        error('The event-result file does not contain variable R.');
+    end
+    R = S.R;
+    return;
+end
+
+search_dir = fullfile(output_root, cfg.file_stem, 'event_detection');
+pattern = fullfile(search_dir, [cfg.file_stem, '_bandpass_events_*.mat']);
+L = dir(pattern);
+
+if isempty(L)
+    error('No event-result file matching %s was found.', pattern);
+end
+
+if numel(L) > 1
+    is_short_name = false(numel(L), 1);
+    for i = 1:numel(L)
+        is_short_name(i) = ~isempty(regexp(L(i).name, ...
+            ['^', regexptranslate('escape', cfg.file_stem), '_bandpass_events_[0-9]+bands\.mat$'], 'once'));
+    end
+
+    if sum(is_short_name) == 1
+        L = L(is_short_name);
+    else
+        names = cell(numel(L), 1);
+        for i = 1:numel(L)
+            names{i} = fullfile(L(i).folder, L(i).name);
+        end
+        error('Multiple event-result files found. Please pass event_input explicitly:\n%s', strjoin(names, newline));
+    end
+end
+
+S = load(fullfile(L(1).folder, L(1).name));
+if ~isfield(S, 'R')
+    error('The event-result file does not contain variable R.');
+end
+
+R = S.R;
+end
+
+
+function colors = default_band_colors(n_bands)
+% Default colors for event-band overlays.
+
+base = [ ...
+    0.0000, 0.4470, 0.7410; ...
+    0.8500, 0.3250, 0.0980; ...
+    0.4660, 0.6740, 0.1880; ...
+    0.4940, 0.1840, 0.5560; ...
+    0.9290, 0.6940, 0.1250];
+
+if n_bands <= size(base, 1)
+    colors = base(1:n_bands, :);
+else
+    colors = lines(n_bands);
 end
 end
