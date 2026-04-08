@@ -1,5 +1,6 @@
 import os
 # from autograd import jacobian, hessian
+import time
 import tensorflow as tf
 from tensorflow.keras.layers import Dense, Layer, Concatenate, Input
 from tensorflow.keras.models import Model
@@ -11,11 +12,16 @@ import gc
 from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.models import load_model
 import numpy as np
+import scipy.linalg
 from tqdm import tqdm
 
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.keras.backend.set_floatx('float32')
+
+DEFAULT_AUTODL_TMP_ROOT = '/root/autodl-tmp'
+DEFAULT_CHECKPOINT_ROOT = os.path.join(DEFAULT_AUTODL_TMP_ROOT, 'checkpoints')
+READ_ONLY_AUTODL_ROOT = '/root/autodl-pub'
 
 class AbstractDictionary(object):
     """
@@ -110,7 +116,8 @@ class KoopmanSolver(object):
             training_policy=None,
             analysis_dtype='float32',
             gram_dtype='float64',
-            spectral_dtype='float64'):
+            spectral_dtype='float64',
+            residual_form='projected_kv'):
         """Initializer
 
         :param dic: dictionary
@@ -124,6 +131,11 @@ class KoopmanSolver(object):
         self.dic_func = dic.call  # dictionary functions
         self.target_dim = target_dim
         self.reg = reg
+        self.residual_form = residual_form
+        if self.residual_form not in ('projected_kv', 'projected_vlambda'):
+            raise ValueError(
+                "residual_form must be 'projected_kv' or 'projected_vlambda'."
+            )
         self.training_policy = training_policy or (
             'mixed_float16' if tf.config.list_physical_devices('GPU') else 'float32'
         )
@@ -131,11 +143,33 @@ class KoopmanSolver(object):
         self.gram_dtype = tf.as_dtype(gram_dtype)
         self.spectral_dtype = np.dtype(spectral_dtype)
         self.training_input_dtype = tf.float32
+        self.training_real_dtype = tf.float32
+        self.training_complex_dtype = tf.complex64
         self.psi_x = None
         self.psi_y = None
+        self.model = None
+        self.layer_k = None
         self.analysis_dic = None
         self.output_dim = None
         self.eigenvectors_var = None
+        self.eigenvalues_var = None
+        self.eigenvectors_inv_B = None
+        self.Psi_X = None
+        self.Psi_Y = None
+        self.outer_history = []
+        self.eigvec_cond = None
+        self.best_val_metric = np.nan
+        self.best_outer_epoch = None
+        self.best_outer_index = None
+        self.best_train_metric = np.nan
+        self.best_eigvec_cond = np.nan
+        self.best_lr = np.nan
+        self.best_reg = np.nan
+        self.best_outer_summary = {}
+        self.best_checkpoint_saved = False
+        self.best_checkpoint_path = None
+        self.final_checkpoint_path = None
+        self.default_checkpoint_root = DEFAULT_CHECKPOINT_ROOT
         mixed_precision.set_global_policy(self.training_policy)
 
     def separate_data(self, data):
@@ -143,32 +177,63 @@ class KoopmanSolver(object):
         data_y = data[1]
         return data_x, data_y
 
-    def build(self, data_train):
-        # Separate data
-        self.data_train = data_train
-        self.data_x_train, self.data_y_train = self.separate_data(
-            self.data_train)
+    def _normalize_writable_path(self, path_value, default_root):
+        """Normalize writable paths so relative paths land on the AutoDL data disk."""
+        if path_value is None:
+            return None
 
-        # Compute final information
-        self.compute_final_info(reg_final=0.0)
+        expanded_path = os.path.expanduser(path_value)
+        if os.path.isabs(expanded_path):
+            normalized_path = os.path.normpath(expanded_path)
+        else:
+            normalized_path = os.path.normpath(os.path.join(default_root, expanded_path))
 
-    def compute_final_info(self, reg_final):
+        read_only_root = os.path.normpath(READ_ONLY_AUTODL_ROOT)
+        if normalized_path == read_only_root or normalized_path.startswith(read_only_root + os.sep):
+            raise ValueError("Writable paths under /root/autodl-pub are not allowed.")
+
+        return normalized_path
+
+    def compute_final_info(self, reg_final=None):
         # Compute K
+        reg_value = self.reg if reg_final is None else reg_final
         self.K = self.compute_K(self.dic_func,
                                 self.data_x_train,
                                 self.data_y_train,
-                                reg=reg_final)
+                                reg=reg_value)
         self.eig_decomp(self.K)
         self.compute_mode()
 
     def eig_decomp(self, K):
         """ eigen-decomp of K """
-        K_np = np.asarray(K, dtype=self.spectral_dtype)
-        self.eigenvalues, self.eigenvectors = np.linalg.eig(K_np)
+        eig_start = time.time()
+        print(f"eig_decomp: start, K shape={np.shape(K)}, spectral_dtype={self.spectral_dtype}")
+        tensor_to_numpy_start = time.time()
+        K_np = np.array(K.numpy(), dtype=self.spectral_dtype, order='F', copy=True)
+        print(
+            "eig_decomp: tensor->numpy done in "
+            f"{time.time() - tensor_to_numpy_start:.2f}s, "
+            f"norm={np.linalg.norm(K_np):.3e}, "
+            f"max_abs={np.max(np.abs(K_np)):.3e}, "
+            f"has_nan={np.isnan(K_np).any()}, has_inf={np.isinf(K_np).any()}"
+        )
+        eigsolve_start = time.time()
+        print("eig_decomp: starting scipy.linalg.eig")
+        self.eigenvalues, self.eigenvectors = scipy.linalg.eig(
+            K_np,
+            left=False,
+            right=True,
+            overwrite_a=True,
+            check_finite=False
+        )
+        eigsolve_elapsed = time.time() - eigsolve_start
+        print(f"eig_decomp: scipy.linalg.eig done in {eigsolve_elapsed:.2f}s")
         idx = self.eigenvalues.real.argsort()[::-1]
         self.eigenvalues = self.eigenvalues[idx]
         self.eigenvectors = self.eigenvectors[:, idx]
-        self.eigenvectors_inv = np.linalg.inv(self.eigenvectors)
+        self.eigvec_cond = float(np.linalg.cond(self.eigenvectors))
+        print(f"eig_decomp: eigenvector condition number={self.eigvec_cond:.3e}")
+        print(f"eig_decomp: done in {time.time() - eig_start:.2f}s")
 
     def eigenfunctions(self, data_x):
         """ estimated eigenfunctions """
@@ -185,7 +250,11 @@ class KoopmanSolver(object):
         self.B = self.dic.generate_B(self.data_x_train)
 
         # Compute modes
-        self.modes = np.matmul(self.eigenvectors_inv, self.B).T
+        solve_start = time.time()
+        print("compute_mode: starting solve(V, B)")
+        self.eigenvectors_inv_B = np.linalg.solve(self.eigenvectors, self.B)
+        print(f"compute_mode: solve(V, B) done in {time.time() - solve_start:.2f}s")
+        self.modes = self.eigenvectors_inv_B.T
         return self.modes
 
     def calc_psi_next(self, data_x, K):
@@ -319,13 +388,15 @@ class KoopmanSolver(object):
         """
         Streaming computation of the Koopman matrix with a progress bar.
         """
+        compute_k_start = time.time()
         sample = data_x[:1]
         analysis_dic = self._refresh_analysis_dictionary(sample)
         d = analysis_dic(tf.convert_to_tensor(sample, dtype=self.analysis_dtype)).shape[-1]
 
         # initialize accumulators
-        XtX = tf.zeros((d, d), dtype=self.gram_dtype)
-        XtY = tf.zeros((d, d), dtype=self.gram_dtype)
+        XtX_sum = tf.zeros((d, d), dtype=self.gram_dtype)
+        XtY_sum = tf.zeros((d, d), dtype=self.gram_dtype)
+        n_total = 0
 
         total = data_x.shape[0]
 
@@ -340,15 +411,61 @@ class KoopmanSolver(object):
             psi_y_b = analysis_dic(tf.convert_to_tensor(Yb, dtype=self.analysis_dtype))
             psi_x_b = tf.cast(psi_x_b, self.gram_dtype)
             psi_y_b = tf.cast(psi_y_b, self.gram_dtype)
+            batch_n = int(end - start)
 
             # accumulate Gram and cross-covariance
-            XtX += tf.matmul(psi_x_b, psi_x_b, transpose_a=True)
-            XtY += tf.matmul(psi_x_b, psi_y_b, transpose_a=True)
+            XtX_sum += tf.matmul(psi_x_b, psi_x_b, transpose_a=True)
+            XtY_sum += tf.matmul(psi_x_b, psi_y_b, transpose_a=True)
+            n_total += batch_n
 
         # form and solve normal equations
+        if n_total == 0:
+            raise ValueError("compute_K received an empty dataset.")
+
+        n_total_tensor = tf.cast(n_total, self.gram_dtype)
+        G = XtX_sum / n_total_tensor
+        A = XtY_sum / n_total_tensor
+        xtx_diag = tf.linalg.diag_part(G)
+        xtx_diag_min = float(tf.reduce_min(xtx_diag).numpy())
+        xtx_diag_max = float(tf.reduce_max(xtx_diag).numpy())
+        xtx_has_nan = bool(tf.reduce_any(tf.math.is_nan(G)).numpy())
+        xtx_has_inf = bool(tf.reduce_any(tf.math.is_inf(G)).numpy())
+        print(
+            "compute_K: batches done, "
+            f"d={d}, n_total={n_total}, G diag min={xtx_diag_min:.3e}, G diag max={xtx_diag_max:.3e}, "
+            f"has_nan={xtx_has_nan}, has_inf={xtx_has_inf}, elapsed={time.time() - compute_k_start:.2f}s"
+        )
         idmat = tf.eye(d, dtype=self.gram_dtype)
-        inv_term = tf.linalg.pinv(XtX + reg * idmat)
-        K_reg = tf.matmul(inv_term, XtY)
+        system = G + tf.cast(reg, self.gram_dtype) * idmat
+        solve_start = time.time()
+        print("compute_K: starting linear solve")
+        use_pinv = False
+        try:
+            K_reg = tf.linalg.solve(system, A)
+            if not bool(tf.reduce_all(tf.math.is_finite(K_reg)).numpy()):
+                use_pinv = True
+                print("compute_K: linear solve produced non-finite values, falling back to pinv")
+        except (tf.errors.InvalidArgumentError, tf.errors.InternalError) as exc:
+            use_pinv = True
+            print(f"compute_K: linear solve failed with {type(exc).__name__}, falling back to pinv")
+
+        if use_pinv:
+            pinv_start = time.time()
+            print("compute_K: starting pinv fallback")
+            inv_term = tf.linalg.pinv(system)
+            print(f"compute_K: pinv fallback done in {time.time() - pinv_start:.2f}s")
+            matmul_start = time.time()
+            print("compute_K: starting final matmul")
+            K_reg = tf.matmul(inv_term, A)
+            print(
+                f"compute_K: final matmul done in {time.time() - matmul_start:.2f}s, "
+                f"total compute_K time={time.time() - compute_k_start:.2f}s"
+            )
+        else:
+            print(
+                f"compute_K: linear solve done in {time.time() - solve_start:.2f}s, "
+                f"total compute_K time={time.time() - compute_k_start:.2f}s"
+            )
 
         return K_reg
 
@@ -356,10 +473,100 @@ class KoopmanSolver(object):
 
 
     def get_Psi_X(self):
+        if self.Psi_X is None:
+            if not hasattr(self, 'data_x_train'):
+                raise ValueError("Training data is not available for Psi_X.")
+            self.Psi_X = self._compute_dictionary_matrix(self.data_x_train)
         return self.Psi_X
 
     def get_Psi_Y(self):
+        if self.Psi_Y is None:
+            if not hasattr(self, 'data_y_train'):
+                raise ValueError("Training data is not available for Psi_Y.")
+            self.Psi_Y = self._compute_dictionary_matrix(self.data_y_train)
         return self.Psi_Y
+
+    def _compute_dictionary_matrix(self, data):
+        if data.shape[0] == 0:
+            return np.empty((0, 0), dtype=self.spectral_dtype)
+
+        analysis_dic = self._refresh_analysis_dictionary(data[:1])
+        psi = analysis_dic(tf.convert_to_tensor(data, dtype=self.analysis_dtype)).numpy()
+        return psi.astype(self.spectral_dtype, copy=False)
+
+    def _pack_complex_residual(self, residual):
+        return tf.concat(
+            [tf.math.real(residual), tf.math.imag(residual)],
+            axis=-1
+        )
+
+    def _packed_residual_loss(self, y_true, y_pred):
+        diff = tf.cast(y_pred, self.training_real_dtype) - tf.cast(y_true, self.training_real_dtype)
+        return tf.reduce_mean(tf.reduce_sum(tf.square(diff), axis=-1))
+
+    def _build_training_residual(self, psi_x, psi_y):
+        if self.eigenvectors_var is None or self.eigenvalues_var is None:
+            raise ValueError("Spectral variables must be initialized before build_model().")
+
+        if self.residual_form == 'projected_kv':
+            if self.layer_k is None:
+                raise ValueError("Layer_K must be initialized for residual_form='projected_kv'.")
+            psi_x_real = tf.cast(psi_x, self.training_real_dtype)
+            psi_y_real = tf.cast(psi_y, self.training_real_dtype)
+            psi_next = self.layer_k(psi_x_real)
+            psi_diff = tf.cast(psi_y_real - psi_next, self.training_complex_dtype)
+            return tf.matmul(psi_diff, self.eigenvectors_var)
+
+        psi_x_complex = tf.cast(psi_x, self.training_complex_dtype)
+        psi_y_complex = tf.cast(psi_y, self.training_complex_dtype)
+        psi_y_v = tf.matmul(psi_y_complex, self.eigenvectors_var)
+        psi_x_v = tf.matmul(psi_x_complex, self.eigenvectors_var)
+        return psi_y_v - psi_x_v * self.eigenvalues_var
+
+    def _sync_training_spectral_state(self):
+        if self.eigenvectors_var is not None:
+            self.eigenvectors_var.assign(tf.cast(self.eigenvectors, self.training_complex_dtype))
+        if self.eigenvalues_var is not None:
+            self.eigenvalues_var.assign(tf.cast(self.eigenvalues, self.training_complex_dtype))
+        if self.residual_form == 'projected_kv' and self.model is not None:
+            layer_k_weights = self.model.get_layer('Layer_K').weights[0]
+            layer_k_weights.assign(tf.cast(self.K, layer_k_weights.dtype))
+
+    def evaluate_spectral_residual(self, data_x, data_y, residual_form=None):
+        residual_form = residual_form or self.residual_form
+        total_sq = 0.0
+        total_n = 0
+        batch_size = getattr(self, 'batch_size', 1024)
+        eigvecs = tf.cast(self.eigenvectors, self.training_complex_dtype)
+        eigvals = tf.cast(self.eigenvalues, self.training_complex_dtype)
+        k_matrix = tf.cast(self.K, self.training_real_dtype)
+
+        for start in range(0, data_x.shape[0], batch_size):
+            end = min(start + batch_size, data_x.shape[0])
+            x_batch = tf.convert_to_tensor(data_x[start:end], dtype=self.training_input_dtype)
+            y_batch = tf.convert_to_tensor(data_y[start:end], dtype=self.training_input_dtype)
+            psi_x = self.dic_func(x_batch)
+            psi_y = self.dic_func(y_batch)
+
+            if residual_form == 'projected_kv':
+                psi_next = tf.matmul(tf.cast(psi_x, self.training_real_dtype), k_matrix)
+                residual = tf.matmul(
+                    tf.cast(tf.cast(psi_y, self.training_real_dtype) - psi_next, self.training_complex_dtype),
+                    eigvecs
+                )
+            else:
+                psi_x_v = tf.matmul(tf.cast(psi_x, self.training_complex_dtype), eigvecs)
+                psi_y_v = tf.matmul(tf.cast(psi_y, self.training_complex_dtype), eigvecs)
+                residual = psi_y_v - psi_x_v * eigvals
+
+            packed = self._pack_complex_residual(residual)
+            batch_sq = tf.reduce_sum(tf.square(packed), axis=-1)
+            total_sq += float(tf.reduce_sum(batch_sq).numpy())
+            total_n += int(end - start)
+
+        if total_n == 0:
+            return 0.0
+        return total_sq / total_n
 
 
     '''
@@ -377,22 +584,16 @@ class KoopmanSolver(object):
         self.psi_x = self.dic_func(inputs_x)
         self.psi_y = self.dic_func(inputs_y)
 
-        Layer_K = Dense(units=self.psi_y.shape[-1],
-                        use_bias=False,
-                        name='Layer_K',
-                        trainable=False,
-                        dtype='float32')
-        psi_next = Layer_K(tf.cast(self.psi_x, tf.float32))
+        self.layer_k = None
+        if self.residual_form == 'projected_kv':
+            self.layer_k = Dense(units=self.psi_y.shape[-1],
+                                 use_bias=False,
+                                 name='Layer_K',
+                                 trainable=False,
+                                 dtype='float32')
 
-        if self.eigenvectors_var is None:
-            raise ValueError("self.eigenvectors_var must be initialized before build_model().")
-
-        psi_diff = tf.cast(psi_next - tf.cast(self.psi_y, tf.float32), tf.complex64)
-        weighted_diff = tf.matmul(psi_diff, tf.cast(self.eigenvectors_var, tf.complex64))
-        outputs = tf.concat(
-            [tf.math.real(weighted_diff), tf.math.imag(weighted_diff)],
-            axis=-1
-        )
+        residual = self._build_training_residual(self.psi_x, self.psi_y)
+        outputs = self._pack_complex_residual(residual)
         model = Model(inputs=[inputs_x, inputs_y], outputs=outputs)
         return model
 
@@ -491,21 +692,54 @@ class KoopmanSolver(object):
             log_interval,
             lr_decay_factor,
             Nepoch,
-            end_condition=1e-5
+            end_condition=1e-5,
+            checkpoint_path=None,
+            best_checkpoint_path=None,
+            save_best_only=True,
+            resume=False
         ):
         print("build: start")
         self.data_train = data_train
         self.batch_size = batch_size
+        self.outer_history = []
+        self.best_val_metric = np.nan
+        self.best_outer_epoch = None
+        self.best_outer_index = None
+        self.best_train_metric = np.nan
+        self.best_eigvec_cond = np.nan
+        self.best_lr = np.nan
+        self.best_reg = np.nan
+        self.best_outer_summary = {}
+        self.best_checkpoint_saved = False
+        checkpoint_path = self._normalize_writable_path(
+            checkpoint_path,
+            self.default_checkpoint_root
+        )
+        best_checkpoint_path = self._normalize_writable_path(
+            best_checkpoint_path,
+            self.default_checkpoint_root
+        )
+        self.best_checkpoint_path = best_checkpoint_path
+        self.final_checkpoint_path = checkpoint_path
         
         self.data_x_train, self.data_y_train = self.separate_data(self.data_train)
         print(f"build: separate_data done, x_train shape={self.data_x_train.shape}, y_train shape={self.data_y_train.shape}")
         self.data_valid = data_valid
 
         print("build: compute_final_info start")
-        self.compute_final_info(reg_final=0.01)
+        self.compute_final_info()
         print(f"build: compute_final_info done, K shape={self.K.shape}")
         self.output_dim = int(self.K.shape[0]) * 2
-        self.eigenvectors_var = tf.Variable(self.eigenvectors, trainable=False, name='eigenvectors')
+        self.eigenvectors_var = tf.Variable(
+            tf.cast(self.eigenvectors, self.training_complex_dtype),
+            trainable=False,
+            name='eigenvectors'
+        )
+        self.eigenvalues_var = tf.Variable(
+            tf.cast(self.eigenvalues, self.training_complex_dtype),
+            trainable=False,
+            name='eigenvalues'
+        )
 
         self.ds_train = self._make_ds(self.data_x_train, self.data_y_train)
         self.ds_valid = self._make_ds(self.data_valid[0], self.data_valid[1])
@@ -518,56 +752,73 @@ class KoopmanSolver(object):
         print("build: build_model done")
 
         opt = Adam(lr)
-        self.model.compile(optimizer=opt, loss='mse')
+        self.model.compile(optimizer=opt, loss=self._packed_residual_loss)
+        self._sync_training_spectral_state()
 
-        checkpoint_path = './checkpoints_test/'
-        checkpoint_dir = os.path.dirname(checkpoint_path)
-        if not os.path.exists(checkpoint_dir):
-            os.makedirs(checkpoint_dir)
+        K_var = tf.Variable(self.K, trainable=False, name='K')
+        reg_var = tf.Variable(self.reg, trainable=False, name='reg')
 
-        K_var = tf.Variable(self.K, name='K')
-        eigenvalues_var = tf.Variable(self.eigenvalues, name='eigenvalues')
-        reg_var = tf.Variable(self.reg, name='reg')
-
-        dummy_gradients = [tf.zeros_like(var) for var in self.model.trainable_variables]
-        opt.apply_gradients(zip(dummy_gradients, self.model.trainable_variables))
-
-        checkpoint = tf.train.Checkpoint(
-            model=self.model,
-            optimizer=opt,
-            K=K_var,
-            eigenvectors=self.eigenvectors_var,
-            eigenvalues=eigenvalues_var,
-            reg=reg_var
-        )
-        latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir)
-        if latest_checkpoint:
-            checkpoint.restore(latest_checkpoint)
-            self.K = K_var.numpy()
-            self.eigenvectors = self.eigenvectors_var.numpy()
-            self.eigenvalues = eigenvalues_var.numpy()
-            self.reg = reg_var.numpy()
-            print(f"build: restored checkpoint from {latest_checkpoint}")
-        else:
-            print("build: no checkpoint found, starting fresh")
+        checkpoint = None
+        latest_checkpoint = None
+        checkpoint_dir = None
+        best_checkpoint_dir = None
+        if checkpoint_path or best_checkpoint_path:
+            if checkpoint_path:
+                checkpoint_dir = os.path.dirname(checkpoint_path) or '.'
+            if best_checkpoint_path:
+                best_checkpoint_dir = os.path.dirname(best_checkpoint_path) or '.'
+            checkpoint = tf.train.Checkpoint(
+                model=self.model,
+                K=K_var,
+                eigenvectors=self.eigenvectors_var,
+                eigenvalues=self.eigenvalues_var,
+                reg=reg_var
+            )
+        if checkpoint_path:
+            if resume:
+                latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir)
+                if latest_checkpoint:
+                    checkpoint.restore(latest_checkpoint)
+                    self.K = K_var.numpy()
+                    self.eigenvectors = self.eigenvectors_var.numpy().astype(np.complex128, copy=False)
+                    self.eigenvalues = self.eigenvalues_var.numpy().astype(np.complex128, copy=False)
+                    self.reg = float(reg_var.numpy())
+                    self._sync_training_spectral_state()
+                    print(f"build: restored checkpoint from {latest_checkpoint}")
+                else:
+                    print("build: no checkpoint found, starting fresh")
+        if checkpoint_path and not resume:
+            print("build: resume disabled, skipping checkpoint restore")
         print(f"build: optimizer lr={opt.lr.numpy()}")
 
         losses = []
         val_losses = []
         learning_rate_changes = []
         stop_flag = 0
+        best_val_metric = np.inf
+        best_outer_epoch = None
+        best_checkpoint_saved = False
+
+        def _sync_checkpoint_state():
+            K_var.assign(tf.cast(self.K, K_var.dtype))
+            self.eigenvectors_var.assign(tf.cast(self.eigenvectors, self.training_complex_dtype))
+            self.eigenvalues_var.assign(tf.cast(self.eigenvalues, self.training_complex_dtype))
+            reg_var.assign(tf.cast(self.reg, reg_var.dtype))
 
         for i in range(epochs):
+            outer_epoch_start = time.time()
             print(f"build: Outer Epoch {i+1}/{epochs}")
             print("build: compute_K start")
             self.K = self.compute_K(self.dic_func, self.data_x_train, self.data_y_train, self.reg)
             self.eig_decomp(self.K)
-            self.eigenvectors_var.assign(self.eigenvectors)
+            self.compute_mode()
+            self._sync_training_spectral_state()
             print("build: compute_K done")
 
-            layer_k_weights = self.model.get_layer('Layer_K').weights[0]
-            layer_k_weights.assign(tf.cast(self.K, layer_k_weights.dtype))
-            print("build: assigned K to Layer_K")
+            if self.residual_form == 'projected_kv':
+                print("build: assigned K to Layer_K")
+            else:
+                print("build: synced V/Lambda into training graph")
 
             print("build: train_psi start")
             self.history = self.train_psi(
@@ -581,34 +832,111 @@ class KoopmanSolver(object):
             mem = memory_usage()[0]
             print(f"build: post-gc memory usage={mem} MiB")
 
-            learning_rate_changes.append(opt.lr.numpy())
+            print("build: post-train compute_K start")
+            self.K = self.compute_K(self.dic_func, self.data_x_train, self.data_y_train, self.reg)
+            self.eig_decomp(self.K)
+            self.compute_mode()
+            self._sync_training_spectral_state()
+            print("build: post-train compute_K done")
+
+            inner_train_last = float(self.history.history['loss'][-1]) if self.history.history.get('loss') else np.nan
+            inner_val_last = float(self.history.history['val_loss'][-1]) if self.history.history.get('val_loss') else np.nan
+            train_metric = self.evaluate_spectral_residual(self.data_x_train, self.data_y_train)
+            val_metric = self.evaluate_spectral_residual(self.data_valid[0], self.data_valid[1])
+            self.outer_history.append({
+                'outer_epoch': i + 1,
+                'inner_train_last': inner_train_last,
+                'inner_val_last': inner_val_last,
+                'train_metric': train_metric,
+                'val_metric': val_metric,
+                'eigvec_cond': self.eigvec_cond,
+                'lr': float(opt.lr.numpy()),
+                'reg': float(self.reg)
+            })
+            print(
+                f"build: outer metrics train={train_metric:.6e}, "
+                f"val={val_metric:.6e}, eigvec_cond={self.eigvec_cond:.3e}"
+            )
+
+            current_outer_index = len(self.outer_history) - 1
+            current_is_better = False
+            if best_outer_epoch is None:
+                current_is_better = True
+            elif np.isfinite(val_metric) and (not np.isfinite(best_val_metric) or val_metric < best_val_metric):
+                current_is_better = True
+
+            if current_is_better:
+                best_val_metric = float(val_metric)
+                best_outer_epoch = i + 1
+                self.best_val_metric = float(val_metric)
+                self.best_outer_epoch = i + 1
+                self.best_outer_index = current_outer_index
+                self.best_train_metric = float(train_metric)
+                self.best_eigvec_cond = float(self.eigvec_cond)
+                self.best_lr = float(opt.lr.numpy())
+                self.best_reg = float(self.reg)
+                self.best_outer_summary = {
+                    'best_val_metric': self.best_val_metric,
+                    'best_outer_epoch': self.best_outer_epoch,
+                    'best_outer_index': self.best_outer_index,
+                    'best_train_metric': self.best_train_metric,
+                    'best_eigvec_cond': self.best_eigvec_cond,
+                    'best_lr': self.best_lr,
+                    'best_reg': self.best_reg
+                }
+                print(
+                    f"build: new best outer val_metric={self.best_val_metric:.6e} "
+                    f"at epoch {self.best_outer_epoch}"
+                )
+
+            should_save_best_checkpoint = (
+                checkpoint is not None
+                and best_checkpoint_path is not None
+                and (current_is_better or not save_best_only)
+            )
+            if should_save_best_checkpoint:
+                if best_checkpoint_dir and not os.path.exists(best_checkpoint_dir):
+                    os.makedirs(best_checkpoint_dir, exist_ok=True)
+                _sync_checkpoint_state()
+                checkpoint.save(file_prefix=best_checkpoint_path)
+                best_checkpoint_saved = True
+                self.best_checkpoint_saved = True
+                if current_is_better:
+                    print("build: best checkpoint saved")
 
             if i % log_interval == 0:
                 losses.extend(self.history.history['loss'])
                 val_losses.extend(self.history.history['val_loss'])
-                if len(losses) > 2 and losses[-1] > losses[-2]:
-                    print("build: loss increased, decaying lr")
+
+            if len(self.outer_history) > 1:
+                prev_val_metric = self.outer_history[-2]['val_metric']
+                if val_metric > prev_val_metric:
+                    print("build: outer validation metric increased, decaying lr")
                     opt.lr.assign(opt.lr * lr_decay_factor)
-                if len(val_losses) > 200:
-                    avg_loss_change = np.mean([abs(val_losses[j] - val_losses[-1]) for j in range(-200, 0)])
-                    if avg_loss_change < end_condition:
-                        print("build: loss stabilized, stopping training")
-                        stop_flag = 1
-                        break
+
+            learning_rate_changes.append(opt.lr.numpy())
+            print(f"build: Outer Epoch {i+1} finished in {time.time() - outer_epoch_start:.2f}s")
+
+            if len(self.outer_history) >= 3:
+                window = min(5, len(self.outer_history))
+                recent_vals = [entry['val_metric'] for entry in self.outer_history[-window:]]
+                avg_metric_change = np.mean(np.abs(np.diff(recent_vals)))
+                if avg_metric_change < end_condition:
+                    print("build: outer validation metric stabilized, stopping training")
+                    stop_flag = 1
+                    break
 
         print("build: final compute_final_info start")
-        self.compute_final_info(reg_final=0.01)
+        self.compute_final_info()
         print("build: final compute_final_info done")
+        self._sync_training_spectral_state()
+        _sync_checkpoint_state()
+        self.best_checkpoint_saved = best_checkpoint_saved
 
-        layer_k_weights = self.model.get_layer('Layer_K').weights[0]
-        layer_k_weights.assign(tf.cast(self.K, layer_k_weights.dtype))
-        K_var.assign(self.K)
-        self.eigenvectors_var.assign(self.eigenvectors)
-        eigenvalues_var.assign(self.eigenvalues)
-        reg_var.assign(self.reg)
-
-        opt.apply_gradients(zip(dummy_gradients, self.model.trainable_variables))
-        checkpoint.save(file_prefix=checkpoint_path)
-        print("build: checkpoint saved")
+        if checkpoint_path:
+            if checkpoint_dir and not os.path.exists(checkpoint_dir):
+                os.makedirs(checkpoint_dir, exist_ok=True)
+            checkpoint.save(file_prefix=checkpoint_path)
+            print("build: checkpoint saved")
 
         return losses, val_losses, stop_flag, learning_rate_changes

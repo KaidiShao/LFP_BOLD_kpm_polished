@@ -42,7 +42,7 @@ def import_solver(solver_name, search_dirs=None):
     module_candidates = {
         'edmd': ['solver_edmd'],
         'resdmd': ['solver_resdmd'],
-        'resdmd_batch': ['solver_resdmd_batch', 'solver_resdmd_batch2'],
+        'resdmd_batch': ['solver_resdmd_batch3', 'solver_resdmd_batch2', 'solver_resdmd_batch'],
         'resdmd2': ['solver_resdmd2'],
         'resdmd_torch': ['solver_resdmd_torch_gpu7']
     }
