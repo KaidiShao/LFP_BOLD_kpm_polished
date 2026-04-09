@@ -1,0 +1,805 @@
+--- /mnt/data/solver_resdmd_batch3.py	2026-04-07 03:25:34.750127930 +0000
++++ /mnt/data/solver_resdmd_cnn.py	2026-04-07 03:25:30.229623843 +0000
+@@ -2,7 +2,11 @@
+ # from autograd import jacobian, hessian
+ import time
+ import tensorflow as tf
+-from tensorflow.keras.layers import Dense, Layer, Concatenate, Input
++from tensorflow.keras.layers import (Dense, Layer, Concatenate, Input, Conv1D, Conv2D, Conv3D,
++                                     MaxPool1D, MaxPool2D, MaxPool3D,
++                                     GlobalAveragePooling1D, GlobalAveragePooling2D,
++                                     GlobalAveragePooling3D, BatchNormalization,
++                                     Activation, Flatten)
+ from tensorflow.keras.models import Model
+ from tensorflow.keras.optimizers import Adam
+ from tensorflow.keras import mixed_precision
+@@ -14,7 +18,7 @@
+ import numpy as np
+ import scipy.linalg
+ from tqdm import tqdm
+-
++
+ 
+ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+ tf.keras.backend.set_floatx('float32')
+@@ -22,92 +26,203 @@
+ DEFAULT_AUTODL_TMP_ROOT = '/root/autodl-tmp'
+ DEFAULT_CHECKPOINT_ROOT = os.path.join(DEFAULT_AUTODL_TMP_ROOT, 'checkpoints')
+ READ_ONLY_AUTODL_ROOT = '/root/autodl-pub'
+-
+-class AbstractDictionary(object):
+-    """
+-    A base class for dictionary generation.
+-
+-    Attributes:
+-        basis_func_number (int): The number of basis functions.
+-        B (numpy.ndarray): The B matrix.
+-    """
+-
+-    def generate_B(self, inputs):
+-        """
+-        Generates the B matrix based on the inputs.
+-
+-        Args:
+-            inputs (numpy.ndarray): The input array.
+-
+-        Returns:
+-            numpy.ndarray: The generated B matrix.
+-        """
+-        target_dim = inputs.shape[-1]
+-        self.basis_func_number = self.n_psi_train + target_dim + 1
+-        # Form B matrix
+-        self.B = np.zeros((self.basis_func_number, target_dim))
+-        for i in range(0, target_dim):
+-            self.B[i + 1][i] = 1
+-        return self.B
+-
+-class KoopmanNN(tf.keras.layers.Layer):
+-    def __init__(self, layer_sizes=[64, 64], n_psi_train=22, **kwargs):
+-        super(KoopmanNN, self).__init__(**kwargs)
+-        self.layer_sizes = layer_sizes
+-        self.n_psi_train = n_psi_train  # Using n_psi_train directly, consistent with DicNN
+-        self.input_layer = tf.keras.layers.Dense(layer_sizes[0], use_bias=False)
+-        self.hidden_layers = [tf.keras.layers.Dense(size, activation='tanh') for size in layer_sizes]
+-        self.output_layer = tf.keras.layers.Dense(n_psi_train)
+-
+-    def call(self, inputs):
+-        x = self.input_layer(inputs)
+-        for layer in self.hidden_layers:
+-            x = layer(x)
+-        psi_x_train = self.output_layer(x)
+-        
+-        # Directly integrating the generation of the constant and concatenation as done in PsiNN
+-        constant = tf.ones_like(inputs[:, :1])
+-        outputs = tf.keras.layers.Concatenate()([constant, inputs, psi_x_train])
+-        return outputs
+-
+-    def get_config(self):
+-        config = super(KoopmanNN, self).get_config()
+-        config.update({
+-            'layer_sizes': self.layer_sizes,
+-            'n_psi_train': self.n_psi_train
+-        })
+-        return config
+-    
+-    def generate_B(self, inputs):
+-        """
+-        Correctly generates the B matrix based on the inputs, using the proper attribute.
+-        """
+-        target_dim = inputs.shape[-1]
+-        # Use n_psi_train instead of n_dic_customized
+-        self.basis_func_number = self.n_psi_train + target_dim + 1
+-        self.B = np.zeros((self.basis_func_number, target_dim))
+-        for i in range(0, target_dim):
+-            self.B[i + 1][i] = 1
+-        return self.B
+-
+-
++
++class AbstractDictionary(object):
++    """
++    A base class for dictionary generation.
++
++    Attributes:
++        basis_func_number (int): The number of basis functions.
++        B (numpy.ndarray): The B matrix.
++    """
++
++    def generate_B(self, inputs):
++        """
++        Generates the B matrix based on the inputs.
++
++        Args:
++            inputs (numpy.ndarray): The input array.
++
++        Returns:
++            numpy.ndarray: The generated B matrix.
++        """
++        target_dim = int(np.prod(inputs.shape[1:]))
++        self.basis_func_number = self.n_psi_train + target_dim + 1
++        # Form B matrix for flattened state coordinates.
++        self.B = np.zeros((self.basis_func_number, target_dim))
++        for i in range(0, target_dim):
++            self.B[i + 1][i] = 1
++        return self.B
++
++class KoopmanNN(tf.keras.layers.Layer):
++    def __init__(self, layer_sizes=[64, 64], n_psi_train=22, **kwargs):
++        super(KoopmanNN, self).__init__(**kwargs)
++        self.layer_sizes = layer_sizes
++        self.n_psi_train = n_psi_train  # Using n_psi_train directly, consistent with DicNN
++        self.input_layer = tf.keras.layers.Dense(layer_sizes[0], use_bias=False)
++        self.hidden_layers = [tf.keras.layers.Dense(size, activation='tanh') for size in layer_sizes]
++        self.output_layer = tf.keras.layers.Dense(n_psi_train)
++
++    def call(self, inputs):
++        raw_flat = tf.reshape(inputs, [tf.shape(inputs)[0], -1])
++        x = self.input_layer(raw_flat)
++        for layer in self.hidden_layers:
++            x = layer(x)
++        psi_x_train = self.output_layer(x)
++
++        # Keep the constant term and raw coordinates as in the original ResKoopNet design.
++        constant = tf.ones((tf.shape(inputs)[0], 1), dtype=inputs.dtype)
++        outputs = tf.concat([constant, raw_flat, psi_x_train], axis=-1)
++        return outputs
++
++    def get_config(self):
++        config = super(KoopmanNN, self).get_config()
++        config.update({
++            'layer_sizes': self.layer_sizes,
++            'n_psi_train': self.n_psi_train
++        })
++        return config
++    
++    def generate_B(self, inputs):
++        """
++        Correctly generates the B matrix based on the inputs, using the proper attribute.
++        """
++        target_dim = int(np.prod(inputs.shape[1:]))
++        # Use the flattened state dimension for non-vector inputs.
++        self.basis_func_number = self.n_psi_train + target_dim + 1
++        self.B = np.zeros((self.basis_func_number, target_dim))
++        for i in range(0, target_dim):
++            self.B[i + 1][i] = 1
++        return self.B
++
++
++class KoopmanCNN(tf.keras.layers.Layer):
++    def __init__(
++            self,
++            input_shape,
++            conv_filters=(32, 64, 128),
++            kernel_size=3,
++            pool_size=2,
++            dense_units=(128,),
++            n_psi_train=22,
++            include_raw_state=True,
++            **kwargs):
++        super(KoopmanCNN, self).__init__(**kwargs)
++        self.input_shape_spec = tuple(input_shape)
++        self.conv_filters = tuple(conv_filters)
++        self.kernel_size = kernel_size
++        self.pool_size = pool_size
++        self.dense_units = tuple(dense_units)
++        self.n_psi_train = n_psi_train
++        self.include_raw_state = include_raw_state
++
++        # The last axis is assumed to be channel.
++        self.spatial_ndim = len(self.input_shape_spec) - 1
++        if self.spatial_ndim not in (1, 2, 3):
++            raise ValueError(
++                "KoopmanCNN expects input_shape to include a channel axis and be "
++                "either (L, C), (H, W, C), or (D, H, W, C)."
++            )
++
++        if self.spatial_ndim == 1:
++            conv_cls = Conv1D
++            pool_cls = MaxPool1D
++            gap_cls = GlobalAveragePooling1D
++        elif self.spatial_ndim == 2:
++            conv_cls = Conv2D
++            pool_cls = MaxPool2D
++            gap_cls = GlobalAveragePooling2D
++        else:
++            conv_cls = Conv3D
++            pool_cls = MaxPool3D
++            gap_cls = GlobalAveragePooling3D
++
++        self.raw_flatten = Flatten(name='raw_flatten')
++        self.conv_blocks = []
++        for i, filters in enumerate(self.conv_filters):
++            block = tf.keras.Sequential([
++                conv_cls(
++                    filters=filters,
++                    kernel_size=self.kernel_size,
++                    padding='same',
++                    use_bias=False,
++                    name=f'conv_{i}'
++                ),
++                BatchNormalization(name=f'bn_{i}'),
++                Activation('relu', name=f'relu_{i}'),
++                pool_cls(pool_size=self.pool_size, name=f'pool_{i}')
++            ], name=f'conv_block_{i}')
++            self.conv_blocks.append(block)
++
++        self.global_pool = gap_cls(name='global_pool')
++        self.hidden_layers = [
++            Dense(size, activation='tanh', name=f'head_dense_{i}')
++            for i, size in enumerate(self.dense_units)
++        ]
++        self.output_layer = Dense(n_psi_train, name='psi_train')
++
++    def call(self, inputs):
++        x = inputs
++        for block in self.conv_blocks:
++            x = block(x)
++        x = self.global_pool(x)
++        for layer in self.hidden_layers:
++            x = layer(x)
++        psi_x_train = self.output_layer(x)
++
++        constant = tf.ones((tf.shape(inputs)[0], 1), dtype=inputs.dtype)
++        if self.include_raw_state:
++            raw_flat = self.raw_flatten(inputs)
++            outputs = tf.concat([constant, raw_flat, psi_x_train], axis=-1)
++        else:
++            outputs = tf.concat([constant, psi_x_train], axis=-1)
++        return outputs
++
++    def get_config(self):
++        config = super(KoopmanCNN, self).get_config()
++        config.update({
++            'input_shape': self.input_shape_spec,
++            'conv_filters': self.conv_filters,
++            'kernel_size': self.kernel_size,
++            'pool_size': self.pool_size,
++            'dense_units': self.dense_units,
++            'n_psi_train': self.n_psi_train,
++            'include_raw_state': self.include_raw_state
++        })
++        return config
++
++    def generate_B(self, inputs):
++        if not self.include_raw_state:
++            raise ValueError(
++                "compute_mode() requires explicit state coordinates. "
++                "Set include_raw_state=True, or rewrite compute_mode to use a "
++                "low-dimensional linear basis / decoder."
++            )
++
++        target_dim = int(np.prod(inputs.shape[1:]))
++        self.basis_func_number = 1 + target_dim + self.n_psi_train
++        self.B = np.zeros((self.basis_func_number, target_dim))
++        self.B[1:1 + target_dim, :] = np.eye(target_dim)
++        return self.B
++
++
+ class KoopmanSolver(object):
+-
+-
+-    '''
+-    Build the Koopman solver
+-
+-    This part represents a Koopman solver that can be used to build and solve Koopman operator models.
+-
+-    Attributes:
+-        dic (class): The dictionary class used for Koopman operator approximation.
+-        dic_func (function): The dictionary functions used for Koopman operator approximation.
+-        target_dim (int): The dimension of the variable of the equation.
+-        reg (float, optional): The regularization parameter when computing K. Defaults to 0.0.
+-        psi_x (None): Placeholder for the feature matrix of the input data.
+-        psi_y (None): Placeholder for the feature matrix of the output data.
+-    '''
+-
++
++
++    '''
++    Build the Koopman solver
++
++    This part represents a Koopman solver that can be used to build and solve Koopman operator models.
++
++    Attributes:
++        dic (class): The dictionary class used for Koopman operator approximation.
++        dic_func (function): The dictionary functions used for Koopman operator approximation.
++        target_dim (int): The dimension of the variable of the equation.
++        reg (float, optional): The regularization parameter when computing K. Defaults to 0.0.
++        psi_x (None): Placeholder for the feature matrix of the input data.
++        psi_y (None): Placeholder for the feature matrix of the output data.
++    '''
++
+     def __init__(
+             self,
+             dic,
+@@ -121,15 +236,19 @@
+         """Initializer
+ 
+         :param dic: dictionary
+-        :type dic: class
+-        :param target_dim: dimension of the variable of the equation
+-        :type target_dim: int
+-        :param reg: the regularization parameter when computing K, defaults to 0.0
+-        :type reg: float, optional
+-        """
+-        self.dic = dic  # dictionary class
++        :type dic: class
++        :param target_dim: dimension of the variable of the equation
++        :type target_dim: int
++        :param reg: the regularization parameter when computing K, defaults to 0.0
++        :type reg: float, optional
++        """
++        self.dic = dic  # dictionary class
+         self.dic_func = dic.call  # dictionary functions
+-        self.target_dim = target_dim
++        if isinstance(target_dim, (tuple, list, tf.TensorShape, np.ndarray)):
++            self.input_shape = tuple(int(dim) for dim in target_dim)
++        else:
++            self.input_shape = (int(target_dim),)
++        self.target_dim = int(np.prod(self.input_shape))
+         self.reg = reg
+         self.residual_form = residual_form
+         if self.residual_form not in ('projected_kv', 'projected_vlambda'):
+@@ -171,7 +290,7 @@
+         self.final_checkpoint_path = None
+         self.default_checkpoint_root = DEFAULT_CHECKPOINT_ROOT
+         mixed_precision.set_global_policy(self.training_policy)
+-
++
+     def separate_data(self, data):
+         data_x = data[0]
+         data_y = data[1]
+@@ -193,7 +312,7 @@
+             raise ValueError("Writable paths under /root/autodl-pub are not allowed.")
+ 
+         return normalized_path
+-
++
+     def compute_final_info(self, reg_final=None):
+         # Compute K
+         reg_value = self.reg if reg_final is None else reg_final
+@@ -203,7 +322,7 @@
+                                 reg=reg_value)
+         self.eig_decomp(self.K)
+         self.compute_mode()
+-
++
+     def eig_decomp(self, K):
+         """ eigen-decomp of K """
+         eig_start = time.time()
+@@ -235,14 +354,21 @@
+         print(f"eig_decomp: eigenvector condition number={self.eigvec_cond:.3e}")
+         print(f"eig_decomp: done in {time.time() - eig_start:.2f}s")
+ 
++    def _ensure_batched_input(self, data_x):
++        data_x = np.asarray(data_x)
++        if tuple(data_x.shape) == self.input_shape:
++            data_x = np.expand_dims(data_x, axis=0)
++        return data_x
++
+     def eigenfunctions(self, data_x):
+         """ estimated eigenfunctions """
++        data_x = self._ensure_batched_input(data_x)
+         analysis_dic = self._refresh_analysis_dictionary(data_x[:1])
+         psi_x = analysis_dic(tf.convert_to_tensor(data_x, dtype=self.analysis_dtype)).numpy()
+         psi_x = psi_x.astype(self.spectral_dtype, copy=False)
+         val = np.matmul(psi_x, self.eigenvectors)
+         return val
+-
++
+     def compute_mode(self):
+         self.basis_func_number = self.K.shape[0]
+ 
+@@ -256,21 +382,22 @@
+         print(f"compute_mode: solve(V, B) done in {time.time() - solve_start:.2f}s")
+         self.modes = self.eigenvectors_inv_B.T
+         return self.modes
+-
+-    def calc_psi_next(self, data_x, K):
+-        psi_x = self.dic_func(data_x)
+-        psi_next = tf.matmul(psi_x, K)
+-        return psi_next
+-
++
++    def calc_psi_next(self, data_x, K):
++        psi_x = self.dic_func(data_x)
++        psi_next = tf.matmul(psi_x, K)
++        return psi_next
++
+     def predict(self, x0, traj_len):
+-        """ predict the trajectory """
+-        traj = [x0]
+-        for _ in range(traj_len - 1):
+-            x_curr = traj[-1]
+-            efunc = self.eigenfunctions(x_curr)
+-            x_next = np.matmul(self.modes, (self.eigenvalues * efunc).T)
+-            traj.append((x_next.real).T)
+-        traj = np.transpose(np.stack(traj, axis=0), [1, 0, 2])
++        """ predict the trajectory """
++        x_curr = self._ensure_batched_input(x0)
++        traj = [x_curr]
++        for _ in range(traj_len - 1):
++            efunc = self.eigenfunctions(x_curr)
++            x_next = np.matmul(self.modes, (self.eigenvalues * efunc).T)
++            x_curr = (x_next.real).T.reshape((x_next.shape[1],) + self.input_shape)
++            traj.append(x_curr)
++        traj = np.stack(traj, axis=1)
+         return traj.squeeze()
+ 
+     def _refresh_analysis_dictionary(self, sample):
+@@ -301,89 +428,89 @@
+         analysis_dic.set_weights(cast_weights)
+         self.analysis_dic = analysis_dic
+         return self.analysis_dic
+-
+-    # def compute_K(self, dic, data_x, data_y, reg):
+-    #     psi_x = dic(data_x)
+-    #     psi_y = dic(data_y)
+-    #     # Compute Psi_X and Psi_Y
+-    #     self.Psi_X = dic(data_x)
+-    #     self.Psi_Y = dic(data_y)
+-    #     psi_xt = tf.transpose(psi_x)
+-    #     idmat = tf.eye(psi_x.shape[-1], dtype='float64')
+-    #     xtx_inv = tf.linalg.pinv(reg * idmat + tf.matmul(psi_xt, psi_x))
+-    #     xty = tf.matmul(psi_xt, psi_y)
+-    #     self.K_reg = tf.matmul(xtx_inv, xty)
+-    #     return self.K_reg
+-    # def compute_K(self, dic, data_x, data_y, reg):
+-    #     print("compute_K: start")
+-    #     print(f"compute_K: data_x shape={data_x.shape}, data_y shape={data_y.shape}")
+-    #     # build dictionary matrices
+-    #     psi_x = self.batch_apply_dic(data_x, self.batch_size)
+-    #     print(f"compute_K: psi_x computed, shape={psi_x.shape}")
+-    #     psi_y = self.batch_apply_dic(data_y, self.batch_size)
+-    #     print(f"compute_K: psi_y computed, shape={psi_y.shape}")
+-
+-    #     # store for later inspection
+-    #     print("compute_K: computing and storing Psi_X, Psi_Y")
+-    #     self.Psi_X = psi_x 
+-    #     self.Psi_Y = psi_y
+-    #     print(f"compute_K: Psi_X shape={self.Psi_X.shape}, Psi_Y shape={self.Psi_Y.shape}")
+-
+-    #     # form normal equations
+-    #     print("compute_K: forming normal equation components")
+-    #     psi_xt = tf.transpose(psi_x)
+-    #     print(psi_xt.shape, psi_x.shape)
+-    #     idmat = tf.eye(psi_x.shape[-1], dtype='float64')
+-
+-    #     print("compute_K: computing (X^T X + reg*I)^{-1}")
+-    #     xtx_inv = tf.linalg.pinv(reg * idmat + tf.matmul(psi_xt, psi_x))
+-    #     print("compute_K: xtx_inv computed")
+-
+-    #     print("compute_K: computing X^T Y")
+-    #     xty = tf.matmul(psi_xt, psi_y)
+-    #     print(f"compute_K: xty computed, shape={xty.shape}")
+-
+-    #     # compute and return Koopman matrix
+-    #     print("compute_K: computing K_reg")
+-    #     self.K_reg = tf.matmul(xtx_inv, xty)
+-    #     print(f"compute_K: done, K_reg shape={self.K_reg.shape}")
+-    #     return self.K_reg
+-
+-    # def batch_apply_dic(self, data, batch_size=128):
+-    #     parts = []
+-    #     for i in range(0, data.shape[0], batch_size):
+-    #         print(i)
+-    #         parts.append(self.dic_func(data[i:i+batch_size]))
+-    #     return tf.concat(parts, axis=0)
+-
+-    # def compute_K(self, dic, data_x, data_y, reg):
+-    #     print("compute_K: start (streaming Gram)")
+-    #     d = dic(data_x[:1]).shape[-1]   # dictionary dim
+-    #     XtX = tf.zeros((d, d), dtype='float64')
+-    #     XtY = tf.zeros((d, d), dtype='float64')
+-
+-    #     for i in range(0, data_x.shape[0], self.batch_size):
+-    #         Xb = data_x[i:i+self.batch_size]
+-    #         Yb = data_y[i:i+self.batch_size]
+-
+-    #         psi_x_b = dic(Xb)   # [b, d]
+-    #         psi_y_b = dic(Yb)   # [b, d]
+-
+-    #         # accumulate
+-    #         XtX += tf.matmul(psi_x_b, psi_x_b, transpose_a=True)
+-    #         XtY += tf.matmul(psi_x_b, psi_y_b, transpose_a=True)
+-
+-    #         print(f"  batch {i} → XtX trace={tf.linalg.trace(XtX):.2e}")
+-
+-    #     # now form and solve normal equations
+-    #     idmat = tf.eye(d, dtype='float64')
+-    #     inv_term = tf.linalg.pinv(XtX + reg * idmat)
+-    #     K_reg = tf.matmul(inv_term, XtY)
+-
+-    #     print(f"compute_K: done, K_reg shape={K_reg.shape}")
+-    #     return K_reg
+-
+-
++
++    # def compute_K(self, dic, data_x, data_y, reg):
++    #     psi_x = dic(data_x)
++    #     psi_y = dic(data_y)
++    #     # Compute Psi_X and Psi_Y
++    #     self.Psi_X = dic(data_x)
++    #     self.Psi_Y = dic(data_y)
++    #     psi_xt = tf.transpose(psi_x)
++    #     idmat = tf.eye(psi_x.shape[-1], dtype='float64')
++    #     xtx_inv = tf.linalg.pinv(reg * idmat + tf.matmul(psi_xt, psi_x))
++    #     xty = tf.matmul(psi_xt, psi_y)
++    #     self.K_reg = tf.matmul(xtx_inv, xty)
++    #     return self.K_reg
++    # def compute_K(self, dic, data_x, data_y, reg):
++    #     print("compute_K: start")
++    #     print(f"compute_K: data_x shape={data_x.shape}, data_y shape={data_y.shape}")
++    #     # build dictionary matrices
++    #     psi_x = self.batch_apply_dic(data_x, self.batch_size)
++    #     print(f"compute_K: psi_x computed, shape={psi_x.shape}")
++    #     psi_y = self.batch_apply_dic(data_y, self.batch_size)
++    #     print(f"compute_K: psi_y computed, shape={psi_y.shape}")
++
++    #     # store for later inspection
++    #     print("compute_K: computing and storing Psi_X, Psi_Y")
++    #     self.Psi_X = psi_x 
++    #     self.Psi_Y = psi_y
++    #     print(f"compute_K: Psi_X shape={self.Psi_X.shape}, Psi_Y shape={self.Psi_Y.shape}")
++
++    #     # form normal equations
++    #     print("compute_K: forming normal equation components")
++    #     psi_xt = tf.transpose(psi_x)
++    #     print(psi_xt.shape, psi_x.shape)
++    #     idmat = tf.eye(psi_x.shape[-1], dtype='float64')
++
++    #     print("compute_K: computing (X^T X + reg*I)^{-1}")
++    #     xtx_inv = tf.linalg.pinv(reg * idmat + tf.matmul(psi_xt, psi_x))
++    #     print("compute_K: xtx_inv computed")
++
++    #     print("compute_K: computing X^T Y")
++    #     xty = tf.matmul(psi_xt, psi_y)
++    #     print(f"compute_K: xty computed, shape={xty.shape}")
++
++    #     # compute and return Koopman matrix
++    #     print("compute_K: computing K_reg")
++    #     self.K_reg = tf.matmul(xtx_inv, xty)
++    #     print(f"compute_K: done, K_reg shape={self.K_reg.shape}")
++    #     return self.K_reg
++
++    # def batch_apply_dic(self, data, batch_size=128):
++    #     parts = []
++    #     for i in range(0, data.shape[0], batch_size):
++    #         print(i)
++    #         parts.append(self.dic_func(data[i:i+batch_size]))
++    #     return tf.concat(parts, axis=0)
++
++    # def compute_K(self, dic, data_x, data_y, reg):
++    #     print("compute_K: start (streaming Gram)")
++    #     d = dic(data_x[:1]).shape[-1]   # dictionary dim
++    #     XtX = tf.zeros((d, d), dtype='float64')
++    #     XtY = tf.zeros((d, d), dtype='float64')
++
++    #     for i in range(0, data_x.shape[0], self.batch_size):
++    #         Xb = data_x[i:i+self.batch_size]
++    #         Yb = data_y[i:i+self.batch_size]
++
++    #         psi_x_b = dic(Xb)   # [b, d]
++    #         psi_y_b = dic(Yb)   # [b, d]
++
++    #         # accumulate
++    #         XtX += tf.matmul(psi_x_b, psi_x_b, transpose_a=True)
++    #         XtY += tf.matmul(psi_x_b, psi_y_b, transpose_a=True)
++
++    #         print(f"  batch {i} → XtX trace={tf.linalg.trace(XtX):.2e}")
++
++    #     # now form and solve normal equations
++    #     idmat = tf.eye(d, dtype='float64')
++    #     inv_term = tf.linalg.pinv(XtX + reg * idmat)
++    #     K_reg = tf.matmul(inv_term, XtY)
++
++    #     print(f"compute_K: done, K_reg shape={K_reg.shape}")
++    #     return K_reg
++
++
+     def compute_K(self, dic, data_x, data_y, reg):
+         """
+         Streaming computation of the Koopman matrix with a progress bar.
+@@ -468,9 +595,9 @@
+             )
+ 
+         return K_reg
+-
+-
+-
++
++
++
+ 
+     def get_Psi_X(self):
+         if self.Psi_X is None:
+@@ -573,13 +700,13 @@
+     Build the Koopman model with dictionary learning
+     '''
+     def build_model(self):
+-        """Build model with trainable dictionary
+-
+-        The loss function is ||Psi(y) - K Psi(x)||^2 .
+-
+-        """
+-        inputs_x = Input((self.target_dim,), dtype=self.training_input_dtype)
+-        inputs_y = Input((self.target_dim,), dtype=self.training_input_dtype)
++        """Build model with trainable dictionary
++
++        The loss function is ||Psi(y) - K Psi(x)||^2 .
++
++        """
++        inputs_x = Input(self.input_shape, dtype=self.training_input_dtype)
++        inputs_y = Input(self.input_shape, dtype=self.training_input_dtype)
+ 
+         self.psi_x = self.dic_func(inputs_x)
+         self.psi_y = self.dic_func(inputs_y)
+@@ -596,76 +723,76 @@
+         outputs = self._pack_complex_residual(residual)
+         model = Model(inputs=[inputs_x, inputs_y], outputs=outputs)
+         return model
+-
+-    def train_psi(self, model, epochs, callbacks):
+-        """Train the trainable part of the dictionary
+-
+-        :param model: koopman model
+-        :type model: model
+-        :param epochs: the number of training epochs before computing K for each inner training epoch
+-        :type epochs: int
+-        :return: history
+-        :rtype: history callback object
+-        """
+-        # history = model.fit(
+-        #     x=self.data_train,
+-        #     y=self.zeros_data_y_train,
+-        #     epochs=epochs,
+-        #     callbacks = callbacks,
+-        #     validation_data=(
+-        #         self.data_valid,
+-        #         self.zeros_data_y_valid),
+-        #     batch_size=self.batch_size,
+-        #     verbose=1)
+-        history = model.fit(
+-        x=self.ds_train,
+-        validation_data=self.ds_valid,
+-        epochs=epochs,
+-        callbacks=callbacks,
+-        verbose=1
+-        )
+-
+-        return history
+-
+-    def get_basis(self, x, y):
+-        """Returns the dictionary(matrix) consisting of basis.
+-
+-        :param x: array of snapshots
+-        :type x: numpy array
+-        :param y:array of snapshots
+-        :type y: numpy array
+-        """
+-        psi_x = self.dic_func(x)
+-        # Calculate column norms
+-        psi_x_column_norms = np.linalg.norm(psi_x, axis=0)
+-        # Handle the case where norm is zero
+-        psi_x_column_norms[psi_x_column_norms == 0] = 1
+-        psi_x_normalized = psi_x / psi_x_column_norms
+-
+-        # Repeat the steps for psi_y
+-        psi_y = self.dic_func(y)
+-        # Calculate column norms
+-        psi_y_column_norms = np.linalg.norm(psi_y, axis=0)
+-        # Handle the case where norm is zero
+-        psi_y_column_norms[psi_y_column_norms == 0] = 1
+-        psi_y_normalized = psi_y / psi_y_column_norms
+-
+-        return psi_x_normalized, psi_y_normalized
+-
+-    # def get_derivatives(self, inputs):
+-    #     # Compute the first and second derivatives
+-    #     inputs = tf.convert_to_tensor(inputs)
+-    #     with tf.GradientTape() as tape2:
+-    #         with tf.GradientTape() as tape1:
+-    #             tape1.watch(inputs)
+-    #             tape2.watch(inputs)
+-    #             outputs = self.dic(inputs)
+-    #         first_derivatives = tape1.batch_jacobian(outputs, inputs)
+-    #     second_derivatives = tape2.batch_jacobian(first_derivatives, inputs)
+-    #     # print(outputs.shape, first_derivatives.shape, second_derivatives.shape)
+-    #     # return (outputs, first_derivatives, second_derivatives)
+-    #     return (first_derivatives, second_derivatives)
+-    
++
++    def train_psi(self, model, epochs, callbacks):
++        """Train the trainable part of the dictionary
++
++        :param model: koopman model
++        :type model: model
++        :param epochs: the number of training epochs before computing K for each inner training epoch
++        :type epochs: int
++        :return: history
++        :rtype: history callback object
++        """
++        # history = model.fit(
++        #     x=self.data_train,
++        #     y=self.zeros_data_y_train,
++        #     epochs=epochs,
++        #     callbacks = callbacks,
++        #     validation_data=(
++        #         self.data_valid,
++        #         self.zeros_data_y_valid),
++        #     batch_size=self.batch_size,
++        #     verbose=1)
++        history = model.fit(
++        x=self.ds_train,
++        validation_data=self.ds_valid,
++        epochs=epochs,
++        callbacks=callbacks,
++        verbose=1
++        )
++
++        return history
++
++    def get_basis(self, x, y):
++        """Returns the dictionary(matrix) consisting of basis.
++
++        :param x: array of snapshots
++        :type x: numpy array
++        :param y:array of snapshots
++        :type y: numpy array
++        """
++        psi_x = self.dic_func(x)
++        # Calculate column norms
++        psi_x_column_norms = np.linalg.norm(psi_x, axis=0)
++        # Handle the case where norm is zero
++        psi_x_column_norms[psi_x_column_norms == 0] = 1
++        psi_x_normalized = psi_x / psi_x_column_norms
++
++        # Repeat the steps for psi_y
++        psi_y = self.dic_func(y)
++        # Calculate column norms
++        psi_y_column_norms = np.linalg.norm(psi_y, axis=0)
++        # Handle the case where norm is zero
++        psi_y_column_norms[psi_y_column_norms == 0] = 1
++        psi_y_normalized = psi_y / psi_y_column_norms
++
++        return psi_x_normalized, psi_y_normalized
++
++    # def get_derivatives(self, inputs):
++    #     # Compute the first and second derivatives
++    #     inputs = tf.convert_to_tensor(inputs)
++    #     with tf.GradientTape() as tape2:
++    #         with tf.GradientTape() as tape1:
++    #             tape1.watch(inputs)
++    #             tape2.watch(inputs)
++    #             outputs = self.dic(inputs)
++    #         first_derivatives = tape1.batch_jacobian(outputs, inputs)
++    #     second_derivatives = tape2.batch_jacobian(first_derivatives, inputs)
++    #     # print(outputs.shape, first_derivatives.shape, second_derivatives.shape)
++    #     # return (outputs, first_derivatives, second_derivatives)
++    #     return (first_derivatives, second_derivatives)
++    
+ # inside build(), after you have self.data_x_train & self.data_y_train
+     def _make_ds(self, x_array, y_array):
+         x_tensor = tf.convert_to_tensor(x_array, dtype=self.training_input_dtype)
+@@ -680,8 +807,8 @@
+ 
+         ds = ds.map(map_to_zero, num_parallel_calls=tf.data.AUTOTUNE)
+         return ds.prefetch(tf.data.AUTOTUNE)
+-
+-
++
++
+     def build(
+             self,
+             data_train,
+@@ -724,6 +851,11 @@
+         
+         self.data_x_train, self.data_y_train = self.separate_data(self.data_train)
+         print(f"build: separate_data done, x_train shape={self.data_x_train.shape}, y_train shape={self.data_y_train.shape}")
++        observed_input_shape = tuple(int(dim) for dim in self.data_x_train.shape[1:])
++        if observed_input_shape != self.input_shape:
++            print(f"build: overriding input_shape from {self.input_shape} to {observed_input_shape}")
++            self.input_shape = observed_input_shape
++            self.target_dim = int(np.prod(self.input_shape))
+         self.data_valid = data_valid
+ 
+         print("build: compute_final_info start")

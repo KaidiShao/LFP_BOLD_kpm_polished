@@ -668,13 +668,27 @@ class KoopmanSolver(object):
     
 # inside build(), after you have self.data_x_train & self.data_y_train
     def _make_ds(self, x_array, y_array):
-        x_tensor = tf.convert_to_tensor(x_array, dtype=self.training_input_dtype)
-        y_tensor = tf.convert_to_tensor(y_array, dtype=self.training_input_dtype)
-        ds = tf.data.Dataset.from_tensor_slices((x_tensor, y_tensor))
+        x_array = np.asarray(x_array, dtype=self.training_input_dtype.as_numpy_dtype)
+        y_array = np.asarray(y_array, dtype=self.training_input_dtype.as_numpy_dtype)
+        num_samples = int(x_array.shape[0])
+        x_dim = int(x_array.shape[1])
+        y_dim = int(y_array.shape[1])
+
+        ds = tf.data.Dataset.from_tensor_slices(np.arange(num_samples, dtype=np.int64))
         ds = ds.batch(self.batch_size)
 
-        def map_to_zero(x_batch, y_batch):
-            batch_size = tf.shape(x_batch)[0]
+        def map_to_zero(index_batch):
+            def fetch_numpy_batches(index_values):
+                return x_array[index_values], y_array[index_values]
+
+            x_batch, y_batch = tf.numpy_function(
+                fetch_numpy_batches,
+                [index_batch],
+                [self.training_input_dtype, self.training_input_dtype]
+            )
+            x_batch.set_shape([None, x_dim])
+            y_batch.set_shape([None, y_dim])
+            batch_size = tf.shape(index_batch)[0]
             zeros = tf.zeros((batch_size, self.output_dim), dtype=tf.float32)
             return (x_batch, y_batch), zeros
 
