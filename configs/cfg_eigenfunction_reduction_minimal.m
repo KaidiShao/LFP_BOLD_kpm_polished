@@ -68,6 +68,50 @@ cfg.summary.smooth.enable = true;
 cfg.summary.smooth.method = 'movmean';
 cfg.summary.smooth.window = 10;
 
+cfg.viz = struct();
+cfg.viz.overview = struct();
+cfg.viz.overview.enable = true;
+cfg.viz.overview.max_modes = 50;
+cfg.viz.overview.window_idx = [];
+cfg.viz.overview.component_source = 'smooth_if_available';  % 'raw' | 'smooth' | 'smooth_if_available'
+cfg.viz.overview.plot_raw_under_smooth = true;
+cfg.viz.overview.figure_position = [120, 80, 1180, 820];
+cfg.viz.overview.background_color = [0, 0, 0];
+cfg.viz.overview.axes_color = [0, 0, 0];
+cfg.viz.overview.grid_color = [0.75, 0.75, 0.75];
+cfg.viz.overview.text_color = [1, 1, 1];
+cfg.viz.overview.raw_line_color = [0.55, 0.55, 0.55];
+cfg.viz.overview.component_line_color = [0.96, 0.96, 0.96];
+cfg.viz.overview.event_windows = [];
+cfg.viz.overview.event_colors = [
+    0.96, 0.84, 0.62;
+    0.70, 0.80, 0.97;
+    0.88, 0.72, 0.80;
+    0.85, 0.72, 0.95];
+cfg.viz.overview.event_alpha = 0.38;
+cfg.viz.overview.title = 'Eigenfunctions And Temporal Components';
+cfg.viz.overview.save_figure = false;
+cfg.viz.overview.save_dir = fullfile(repo_root, 'results', 'eigenfunction_reduction');
+cfg.viz.overview.save_tag = 'overview';
+
+cfg.viz.spectrum = struct();
+cfg.viz.spectrum.enable = true;
+cfg.viz.spectrum.figure_position = [80, 120, 1260, 360];
+cfg.viz.spectrum.background_color = [0, 0, 0];
+cfg.viz.spectrum.axes_color = [0, 0, 0];
+cfg.viz.spectrum.grid_color = [0.75, 0.75, 0.75];
+cfg.viz.spectrum.text_color = [1, 1, 1];
+cfg.viz.spectrum.distance_colormap = turbo(256);
+cfg.viz.spectrum.embedding_index_colormap = parula(256);
+cfg.viz.spectrum.cluster_colormap = [];
+cfg.viz.spectrum.marker_size = 28;
+cfg.viz.spectrum.draw_unit_circle = true;
+cfg.viz.spectrum.use_bilinear_evalues = false;
+cfg.viz.spectrum.title = 'Spectrum Path Diagnostics';
+cfg.viz.spectrum.save_figure = false;
+cfg.viz.spectrum.save_dir = fullfile(repo_root, 'results', 'eigenfunction_reduction');
+cfg.viz.spectrum.save_tag = 'spectrum_diag';
+
 cfg.save = struct();
 cfg.save.enable = true;
 cfg.save.dir = fullfile(repo_root, 'results', 'eigenfunction_reduction');

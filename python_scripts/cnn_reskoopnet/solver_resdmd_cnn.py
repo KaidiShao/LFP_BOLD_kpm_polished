@@ -206,6 +206,131 @@ class KoopmanCNN(tf.keras.layers.Layer):
         return self.B
 
 
+class KoopmanAuxCNN(tf.keras.layers.Layer):
+    def __init__(
+            self,
+            spec_input_shape,
+            aux_dim,
+            conv_filters=(32, 64, 128),
+            kernel_size=3,
+            pool_size=2,
+            dense_units=(128,),
+            n_psi_train=22,
+            **kwargs):
+        super(KoopmanAuxCNN, self).__init__(**kwargs)
+        self.spec_input_shape = tuple(spec_input_shape)
+        self.aux_dim = int(aux_dim)
+        self.conv_filters = tuple(conv_filters)
+        self.kernel_size = kernel_size
+        self.pool_size = pool_size
+        self.dense_units = tuple(dense_units)
+        self.n_psi_train = n_psi_train
+
+        self.spatial_ndim = len(self.spec_input_shape) - 1
+        if self.spatial_ndim not in (1, 2, 3):
+            raise ValueError(
+                "KoopmanAuxCNN expects spec_input_shape to include a channel axis and be "
+                "either (L, C), (H, W, C), or (D, H, W, C)."
+            )
+
+        if self.spatial_ndim == 1:
+            conv_cls = Conv1D
+            pool_cls = MaxPool1D
+            gap_cls = GlobalAveragePooling1D
+        elif self.spatial_ndim == 2:
+            conv_cls = Conv2D
+            pool_cls = MaxPool2D
+            gap_cls = GlobalAveragePooling2D
+        else:
+            conv_cls = Conv3D
+            pool_cls = MaxPool3D
+            gap_cls = GlobalAveragePooling3D
+
+        self.conv_blocks = []
+        for i, filters in enumerate(self.conv_filters):
+            block = tf.keras.Sequential([
+                conv_cls(
+                    filters=filters,
+                    kernel_size=self.kernel_size,
+                    padding='same',
+                    use_bias=False,
+                    name=f'conv_{i}'
+                ),
+                BatchNormalization(name=f'bn_{i}'),
+                Activation('relu', name=f'relu_{i}'),
+                pool_cls(pool_size=self.pool_size, name=f'pool_{i}')
+            ], name=f'conv_block_{i}')
+            self.conv_blocks.append(block)
+
+        self.global_pool = gap_cls(name='global_pool')
+        self.hidden_layers = [
+            Dense(size, activation='tanh', name=f'head_dense_{i}')
+            for i, size in enumerate(self.dense_units)
+        ]
+        self.output_layer = Dense(n_psi_train, name='psi_train')
+
+    def _split_inputs(self, inputs):
+        if isinstance(inputs, dict):
+            if 'spec' not in inputs or 'aux' not in inputs:
+                raise KeyError("KoopmanAuxCNN dict input must contain 'spec' and 'aux'.")
+            spec = inputs['spec']
+            aux = inputs['aux']
+        elif isinstance(inputs, (list, tuple)) and len(inputs) == 2:
+            spec, aux = inputs
+        else:
+            raise TypeError(
+                "KoopmanAuxCNN expects inputs to be either a dict with keys "
+                "'spec'/'aux' or a two-item tuple/list."
+            )
+        return spec, aux
+
+    def call(self, inputs):
+        spec, aux = self._split_inputs(inputs)
+
+        x = spec
+        for block in self.conv_blocks:
+            x = block(x)
+        x = self.global_pool(x)
+        for layer in self.hidden_layers:
+            x = layer(x)
+        psi_x_train = self.output_layer(x)
+
+        constant = tf.ones((tf.shape(spec)[0], 1), dtype=spec.dtype)
+        aux = tf.cast(aux, spec.dtype)
+        outputs = tf.concat([constant, aux, psi_x_train], axis=-1)
+        return outputs
+
+    def get_config(self):
+        config = super(KoopmanAuxCNN, self).get_config()
+        config.update({
+            'spec_input_shape': self.spec_input_shape,
+            'aux_dim': self.aux_dim,
+            'conv_filters': self.conv_filters,
+            'kernel_size': self.kernel_size,
+            'pool_size': self.pool_size,
+            'dense_units': self.dense_units,
+            'n_psi_train': self.n_psi_train
+        })
+        return config
+
+    def generate_B(self, inputs):
+        _, aux = self._split_inputs(inputs)
+        aux_shape = np.shape(aux)
+        if len(aux_shape) < 2:
+            raise ValueError("Auxiliary state must be shaped [batch, aux_dim].")
+
+        target_dim = int(aux_shape[-1])
+        if target_dim != self.aux_dim:
+            raise ValueError(
+                f"Auxiliary state dim ({target_dim}) does not match aux_dim ({self.aux_dim})."
+            )
+
+        self.basis_func_number = 1 + target_dim + self.n_psi_train
+        self.B = np.zeros((self.basis_func_number, target_dim))
+        self.B[1:1 + target_dim, :] = np.eye(target_dim)
+        return self.B
+
+
 class KoopmanSolver(object):
 
 
@@ -289,12 +414,105 @@ class KoopmanSolver(object):
         self.best_checkpoint_path = None
         self.final_checkpoint_path = None
         self.default_checkpoint_root = DEFAULT_CHECKPOINT_ROOT
+        self.input_structure = None
         mixed_precision.set_global_policy(self.training_policy)
 
     def separate_data(self, data):
         data_x = data[0]
         data_y = data[1]
         return data_x, data_y
+
+    def _is_nested_data(self, data):
+        return isinstance(data, (dict, list, tuple))
+
+    def _flatten_data(self, data):
+        if self._is_nested_data(data):
+            return tf.nest.flatten(data)
+        return [data]
+
+    def _data_length(self, data):
+        first_leaf = self._flatten_data(data)[0]
+        return int(np.shape(first_leaf)[0])
+
+    def _slice_data(self, data, start=None, end=None, indices=None):
+        def _slice_leaf(leaf):
+            if indices is not None:
+                return leaf[indices]
+            return leaf[start:end]
+
+        if self._is_nested_data(data):
+            return tf.nest.map_structure(_slice_leaf, data)
+        return _slice_leaf(data)
+
+    def _convert_data_to_tensor(self, data, dtype):
+        if self._is_nested_data(data):
+            return tf.nest.map_structure(
+                lambda leaf: tf.convert_to_tensor(leaf, dtype=dtype),
+                data
+            )
+        return tf.convert_to_tensor(data, dtype=dtype)
+
+    def _describe_data_shape(self, data):
+        if self._is_nested_data(data):
+            return tf.nest.map_structure(
+                lambda leaf: tuple(int(dim) for dim in np.shape(leaf)),
+                data
+            )
+        return tuple(int(dim) for dim in np.shape(data))
+
+    def _infer_input_structure(self, data):
+        if self._is_nested_data(data):
+            return tf.nest.map_structure(
+                lambda leaf: tuple(int(dim) for dim in np.shape(leaf)[1:]),
+                data
+            )
+        return tuple(int(dim) for dim in np.shape(data)[1:])
+
+    def _matches_unbatched_structure(self, data):
+        if not self._is_nested_data(data) or self.input_structure is None:
+            return False
+
+        leaf_shapes = [
+            tuple(int(dim) for dim in np.shape(leaf))
+            for leaf in self._flatten_data(data)
+        ]
+        expected_shapes = list(tf.nest.flatten(self.input_structure))
+
+        if len(leaf_shapes) != len(expected_shapes):
+            return False
+        return all(shape == expected for shape, expected in zip(leaf_shapes, expected_shapes))
+
+    def _expand_batch_dim(self, data):
+        if self._is_nested_data(data):
+            return tf.nest.map_structure(
+                lambda leaf: np.expand_dims(np.asarray(leaf), axis=0),
+                data
+            )
+        return np.expand_dims(np.asarray(data), axis=0)
+
+    def _batch_size_from_data(self, data):
+        first_leaf = self._flatten_data(data)[0]
+        return tf.shape(first_leaf)[0]
+
+    def _build_input_placeholders(self, sample, prefix):
+        if isinstance(sample, dict):
+            return {
+                key: self._build_input_placeholders(value, f"{prefix}_{key}")
+                for key, value in sample.items()
+            }
+        if isinstance(sample, list):
+            return [
+                self._build_input_placeholders(value, f"{prefix}_{idx}")
+                for idx, value in enumerate(sample)
+            ]
+        if isinstance(sample, tuple):
+            return tuple(
+                self._build_input_placeholders(value, f"{prefix}_{idx}")
+                for idx, value in enumerate(sample)
+            )
+
+        input_shape = tuple(int(dim) for dim in np.shape(sample)[1:])
+        return Input(input_shape, dtype=self.training_input_dtype, name=prefix)
 
     def _normalize_writable_path(self, path_value, default_root):
         """Normalize writable paths so relative paths land on the AutoDL data disk."""
@@ -355,6 +573,10 @@ class KoopmanSolver(object):
         print(f"eig_decomp: done in {time.time() - eig_start:.2f}s")
 
     def _ensure_batched_input(self, data_x):
+        if self._is_nested_data(data_x):
+            if self._matches_unbatched_structure(data_x):
+                data_x = self._expand_batch_dim(data_x)
+            return data_x
         data_x = np.asarray(data_x)
         if tuple(data_x.shape) == self.input_shape:
             data_x = np.expand_dims(data_x, axis=0)
@@ -363,8 +585,8 @@ class KoopmanSolver(object):
     def eigenfunctions(self, data_x):
         """ estimated eigenfunctions """
         data_x = self._ensure_batched_input(data_x)
-        analysis_dic = self._refresh_analysis_dictionary(data_x[:1])
-        psi_x = analysis_dic(tf.convert_to_tensor(data_x, dtype=self.analysis_dtype)).numpy()
+        analysis_dic = self._refresh_analysis_dictionary(self._slice_data(data_x, 0, 1))
+        psi_x = analysis_dic(self._convert_data_to_tensor(data_x, self.analysis_dtype)).numpy()
         psi_x = psi_x.astype(self.spectral_dtype, copy=False)
         val = np.matmul(psi_x, self.eigenvectors)
         return val
@@ -390,6 +612,11 @@ class KoopmanSolver(object):
 
     def predict(self, x0, traj_len):
         """ predict the trajectory """
+        if self._is_nested_data(x0):
+            raise NotImplementedError(
+                "predict() is not supported for multimodal inputs because the "
+                "current solver only reconstructs the explicit low-dimensional state."
+            )
         x_curr = self._ensure_batched_input(x0)
         traj = [x_curr]
         for _ in range(traj_len - 1):
@@ -401,8 +628,8 @@ class KoopmanSolver(object):
         return traj.squeeze()
 
     def _refresh_analysis_dictionary(self, sample):
-        sample = tf.convert_to_tensor(sample, dtype=self.training_input_dtype)
-        _ = self.dic(sample)
+        training_sample = self._convert_data_to_tensor(sample, self.training_input_dtype)
+        _ = self.dic(training_sample)
 
         dic_cls = self.dic.__class__
         if not hasattr(self.dic, 'get_config'):
@@ -416,7 +643,7 @@ class KoopmanSolver(object):
             else:
                 analysis_dic = dic_cls(**self.dic.get_config())
 
-            analysis_sample = tf.convert_to_tensor(sample, dtype=self.analysis_dtype)
+            analysis_sample = self._convert_data_to_tensor(sample, self.analysis_dtype)
             _ = analysis_dic(analysis_sample)
         finally:
             mixed_precision.set_global_policy(current_policy.name)
@@ -516,26 +743,26 @@ class KoopmanSolver(object):
         Streaming computation of the Koopman matrix with a progress bar.
         """
         compute_k_start = time.time()
-        sample = data_x[:1]
+        sample = self._slice_data(data_x, 0, 1)
         analysis_dic = self._refresh_analysis_dictionary(sample)
-        d = analysis_dic(tf.convert_to_tensor(sample, dtype=self.analysis_dtype)).shape[-1]
+        d = analysis_dic(self._convert_data_to_tensor(sample, self.analysis_dtype)).shape[-1]
 
         # initialize accumulators
         XtX_sum = tf.zeros((d, d), dtype=self.gram_dtype)
         XtY_sum = tf.zeros((d, d), dtype=self.gram_dtype)
         n_total = 0
 
-        total = data_x.shape[0]
+        total = self._data_length(data_x)
 
         print(self.batch_size, total)
         # iterate in batches with tqdm progress bar
         for start in tqdm(range(0, total, self.batch_size), desc="compute_K batches", unit="batch"):
             end = min(start + self.batch_size, total)
-            Xb = data_x[start:end]
-            Yb = data_y[start:end]
+            Xb = self._slice_data(data_x, start, end)
+            Yb = self._slice_data(data_y, start, end)
 
-            psi_x_b = analysis_dic(tf.convert_to_tensor(Xb, dtype=self.analysis_dtype))
-            psi_y_b = analysis_dic(tf.convert_to_tensor(Yb, dtype=self.analysis_dtype))
+            psi_x_b = analysis_dic(self._convert_data_to_tensor(Xb, self.analysis_dtype))
+            psi_y_b = analysis_dic(self._convert_data_to_tensor(Yb, self.analysis_dtype))
             psi_x_b = tf.cast(psi_x_b, self.gram_dtype)
             psi_y_b = tf.cast(psi_y_b, self.gram_dtype)
             batch_n = int(end - start)
@@ -614,11 +841,11 @@ class KoopmanSolver(object):
         return self.Psi_Y
 
     def _compute_dictionary_matrix(self, data):
-        if data.shape[0] == 0:
+        if self._data_length(data) == 0:
             return np.empty((0, 0), dtype=self.spectral_dtype)
 
-        analysis_dic = self._refresh_analysis_dictionary(data[:1])
-        psi = analysis_dic(tf.convert_to_tensor(data, dtype=self.analysis_dtype)).numpy()
+        analysis_dic = self._refresh_analysis_dictionary(self._slice_data(data, 0, 1))
+        psi = analysis_dic(self._convert_data_to_tensor(data, self.analysis_dtype)).numpy()
         return psi.astype(self.spectral_dtype, copy=False)
 
     def _pack_complex_residual(self, residual):
@@ -668,10 +895,17 @@ class KoopmanSolver(object):
         eigvals = tf.cast(self.eigenvalues, self.training_complex_dtype)
         k_matrix = tf.cast(self.K, self.training_real_dtype)
 
-        for start in range(0, data_x.shape[0], batch_size):
-            end = min(start + batch_size, data_x.shape[0])
-            x_batch = tf.convert_to_tensor(data_x[start:end], dtype=self.training_input_dtype)
-            y_batch = tf.convert_to_tensor(data_y[start:end], dtype=self.training_input_dtype)
+        total = self._data_length(data_x)
+        for start in range(0, total, batch_size):
+            end = min(start + batch_size, total)
+            x_batch = self._convert_data_to_tensor(
+                self._slice_data(data_x, start, end),
+                self.training_input_dtype
+            )
+            y_batch = self._convert_data_to_tensor(
+                self._slice_data(data_y, start, end),
+                self.training_input_dtype
+            )
             psi_x = self.dic_func(x_batch)
             psi_y = self.dic_func(y_batch)
 
@@ -705,8 +939,12 @@ class KoopmanSolver(object):
         The loss function is ||Psi(y) - K Psi(x)||^2 .
 
         """
-        inputs_x = Input(self.input_shape, dtype=self.training_input_dtype)
-        inputs_y = Input(self.input_shape, dtype=self.training_input_dtype)
+        if self._is_nested_data(self.data_x_train):
+            inputs_x = self._build_input_placeholders(self.data_x_train, 'input_x')
+            inputs_y = self._build_input_placeholders(self.data_y_train, 'input_y')
+        else:
+            inputs_x = Input(self.input_shape, dtype=self.training_input_dtype)
+            inputs_y = Input(self.input_shape, dtype=self.training_input_dtype)
 
         self.psi_x = self.dic_func(inputs_x)
         self.psi_y = self.dic_func(inputs_y)
@@ -795,13 +1033,13 @@ class KoopmanSolver(object):
     
 # inside build(), after you have self.data_x_train & self.data_y_train
     def _make_ds(self, x_array, y_array):
-        x_tensor = tf.convert_to_tensor(x_array, dtype=self.training_input_dtype)
-        y_tensor = tf.convert_to_tensor(y_array, dtype=self.training_input_dtype)
+        x_tensor = self._convert_data_to_tensor(x_array, self.training_input_dtype)
+        y_tensor = self._convert_data_to_tensor(y_array, self.training_input_dtype)
         ds = tf.data.Dataset.from_tensor_slices((x_tensor, y_tensor))
         ds = ds.batch(self.batch_size)
 
         def map_to_zero(x_batch, y_batch):
-            batch_size = tf.shape(x_batch)[0]
+            batch_size = self._batch_size_from_data(x_batch)
             zeros = tf.zeros((batch_size, self.output_dim), dtype=tf.float32)
             return (x_batch, y_batch), zeros
 
@@ -850,12 +1088,18 @@ class KoopmanSolver(object):
         self.final_checkpoint_path = checkpoint_path
         
         self.data_x_train, self.data_y_train = self.separate_data(self.data_train)
-        print(f"build: separate_data done, x_train shape={self.data_x_train.shape}, y_train shape={self.data_y_train.shape}")
-        observed_input_shape = tuple(int(dim) for dim in self.data_x_train.shape[1:])
-        if observed_input_shape != self.input_shape:
-            print(f"build: overriding input_shape from {self.input_shape} to {observed_input_shape}")
-            self.input_shape = observed_input_shape
-            self.target_dim = int(np.prod(self.input_shape))
+        print(
+            "build: separate_data done, "
+            f"x_train shape={self._describe_data_shape(self.data_x_train)}, "
+            f"y_train shape={self._describe_data_shape(self.data_y_train)}"
+        )
+        self.input_structure = self._infer_input_structure(self.data_x_train)
+        if not self._is_nested_data(self.data_x_train):
+            observed_input_shape = tuple(int(dim) for dim in self.data_x_train.shape[1:])
+            if observed_input_shape != self.input_shape:
+                print(f"build: overriding input_shape from {self.input_shape} to {observed_input_shape}")
+                self.input_shape = observed_input_shape
+                self.target_dim = int(np.prod(self.input_shape))
         self.data_valid = data_valid
 
         print("build: compute_final_info start")

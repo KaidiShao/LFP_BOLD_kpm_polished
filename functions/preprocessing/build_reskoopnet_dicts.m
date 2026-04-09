@@ -356,30 +356,33 @@ end
 %% -------------------------
 %  Spectrogram observables
 %  -------------------------
+if strcmp(spec_mode, 'abs')
+    parts_to_add = {'abs'};
+else
+    % Match build_observable_chunk(): for complex_split, all real-valued
+    % features are written first, followed by the corresponding imag block.
+    parts_to_add = {'real', 'imag'};
+end
+
 for r = 1:numel(regions)
-    % Low-frequency single-bin observables
-    for i = 1:numel(low_idx)
-        fi = low_idx(i);
+    for p = 1:numel(parts_to_add)
+        % Low-frequency single-bin observables
+        for i = 1:numel(low_idx)
+            fi = low_idx(i);
+            part_name = parts_to_add{p};
 
-        if strcmp(spec_mode, 'abs')
-            parts_to_add = {'abs'};
-        else
-            parts_to_add = {'real', 'imag'};
-        end
-
-        for p = 1:numel(parts_to_add)
             row_id = row_id + 1;
 
             dim_id(end+1, 1) = row_id;
             source{end+1, 1} = 'spectrogram';
-            name{end+1, 1} = sprintf('spec_%s_%s_f%.3f', parts_to_add{p}, regions{r}, freqs(fi));
+            name{end+1, 1} = sprintf('spec_%s_%s_f%.3f', part_name, regions{r}, freqs(fi));
 
             channel_idx(end+1, 1) = NaN;
             channel_site{end+1, 1} = '';
 
             region_idx(end+1, 1) = r;
             region_label{end+1, 1} = regions{r};
-            part{end+1, 1} = parts_to_add{p};
+            part{end+1, 1} = part_name;
 
             freq_idx_start(end+1, 1) = fi;
             freq_idx_end(end+1, 1) = fi;
@@ -388,34 +391,26 @@ for r = 1:numel(regions)
 
             aggregation{end+1, 1} = 'single_bin';
         end
-    end
+        % High-frequency grouped observables
+        for g = 1:numel(high_groups)
+            idxg = high_groups{g};
+            fi1 = idxg(1);
+            fi2 = idxg(end);
+            part_name = parts_to_add{p};
 
-    % High-frequency grouped observables
-    for g = 1:numel(high_groups)
-        idxg = high_groups{g};
-        fi1 = idxg(1);
-        fi2 = idxg(end);
-
-        if strcmp(spec_mode, 'abs')
-            parts_to_add = {'abs'};
-        else
-            parts_to_add = {'real', 'imag'};
-        end
-
-        for p = 1:numel(parts_to_add)
             row_id = row_id + 1;
 
             dim_id(end+1, 1) = row_id;
             source{end+1, 1} = 'spectrogram';
             name{end+1, 1} = sprintf('spec_%s_%s_f%.3f_%.3f', ...
-                parts_to_add{p}, regions{r}, freqs(fi1), freqs(fi2));
+                part_name, regions{r}, freqs(fi1), freqs(fi2));
 
             channel_idx(end+1, 1) = NaN;
             channel_site{end+1, 1} = '';
 
             region_idx(end+1, 1) = r;
             region_label{end+1, 1} = regions{r};
-            part{end+1, 1} = parts_to_add{p};
+            part{end+1, 1} = part_name;
 
             freq_idx_start(end+1, 1) = fi1;
             freq_idx_end(end+1, 1) = fi2;
