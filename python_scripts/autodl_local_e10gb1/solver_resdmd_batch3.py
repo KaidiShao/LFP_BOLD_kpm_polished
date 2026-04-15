@@ -1,12 +1,9 @@
+import json
 import os
 # from autograd import jacobian, hessian
 import time
 import tensorflow as tf
-from tensorflow.keras.layers import (Dense, Layer, Concatenate, Input, Conv1D, Conv2D, Conv3D,
-                                     MaxPool1D, MaxPool2D, MaxPool3D,
-                                     GlobalAveragePooling1D, GlobalAveragePooling2D,
-                                     GlobalAveragePooling3D, BatchNormalization,
-                                     Activation, Flatten)
+from tensorflow.keras.layers import Dense, Layer, Concatenate, Input
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras import mixed_precision
@@ -23,9 +20,41 @@ from tqdm import tqdm
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 tf.keras.backend.set_floatx('float32')
 
-DEFAULT_AUTODL_TMP_ROOT = '/root/autodl-tmp'
+DEFAULT_AUTODL_TMP_ROOT = '/mnt/e/autodl_results/e10gb1'
 DEFAULT_CHECKPOINT_ROOT = os.path.join(DEFAULT_AUTODL_TMP_ROOT, 'checkpoints')
-READ_ONLY_AUTODL_ROOT = '/root/autodl-pub'
+READ_ONLY_AUTODL_ROOT = '/mnt/e/DataPons_processed'
+
+
+def _json_ready(value):
+    if isinstance(value, dict):
+        return {str(key): _json_ready(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, (np.generic,)):
+        return value.item()
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _save_json_file(path_value, payload):
+    if not path_value:
+        return
+
+    os.makedirs(os.path.dirname(path_value), exist_ok=True)
+    temp_path = f"{path_value}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(_json_ready(payload), handle, indent=2, sort_keys=True)
+    os.replace(temp_path, path_value)
+
+
+def _load_json_file(path_value):
+    if not path_value or (not os.path.exists(path_value)):
+        return None
+    with open(path_value, "r", encoding="utf-8") as handle:
+        return json.load(handle)
 
 class AbstractDictionary(object):
     """
@@ -46,9 +75,9 @@ class AbstractDictionary(object):
         Returns:
             numpy.ndarray: The generated B matrix.
         """
-        target_dim = int(np.prod(inputs.shape[1:]))
+        target_dim = inputs.shape[-1]
         self.basis_func_number = self.n_psi_train + target_dim + 1
-        # Form B matrix for flattened state coordinates.
+        # Form B matrix
         self.B = np.zeros((self.basis_func_number, target_dim))
         for i in range(0, target_dim):
             self.B[i + 1][i] = 1
@@ -64,15 +93,14 @@ class KoopmanNN(tf.keras.layers.Layer):
         self.output_layer = tf.keras.layers.Dense(n_psi_train)
 
     def call(self, inputs):
-        raw_flat = tf.reshape(inputs, [tf.shape(inputs)[0], -1])
-        x = self.input_layer(raw_flat)
+        x = self.input_layer(inputs)
         for layer in self.hidden_layers:
             x = layer(x)
         psi_x_train = self.output_layer(x)
-
-        # Keep the constant term and raw coordinates as in the original ResKoopNet design.
-        constant = tf.ones((tf.shape(inputs)[0], 1), dtype=inputs.dtype)
-        outputs = tf.concat([constant, raw_flat, psi_x_train], axis=-1)
+        
+        # Directly integrating the generation of the constant and concatenation as done in PsiNN
+        constant = tf.ones_like(inputs[:, :1])
+        outputs = tf.keras.layers.Concatenate()([constant, inputs, psi_x_train])
         return outputs
 
     def get_config(self):
@@ -87,247 +115,12 @@ class KoopmanNN(tf.keras.layers.Layer):
         """
         Correctly generates the B matrix based on the inputs, using the proper attribute.
         """
-        target_dim = int(np.prod(inputs.shape[1:]))
-        # Use the flattened state dimension for non-vector inputs.
+        target_dim = inputs.shape[-1]
+        # Use n_psi_train instead of n_dic_customized
         self.basis_func_number = self.n_psi_train + target_dim + 1
         self.B = np.zeros((self.basis_func_number, target_dim))
         for i in range(0, target_dim):
             self.B[i + 1][i] = 1
-        return self.B
-
-
-class KoopmanCNN(tf.keras.layers.Layer):
-    def __init__(
-            self,
-            input_shape,
-            conv_filters=(32, 64, 128),
-            kernel_size=3,
-            pool_size=2,
-            dense_units=(128,),
-            n_psi_train=22,
-            include_raw_state=True,
-            **kwargs):
-        super(KoopmanCNN, self).__init__(**kwargs)
-        self.input_shape_spec = tuple(input_shape)
-        self.conv_filters = tuple(conv_filters)
-        self.kernel_size = kernel_size
-        self.pool_size = pool_size
-        self.dense_units = tuple(dense_units)
-        self.n_psi_train = n_psi_train
-        self.include_raw_state = include_raw_state
-
-        # The last axis is assumed to be channel.
-        self.spatial_ndim = len(self.input_shape_spec) - 1
-        if self.spatial_ndim not in (1, 2, 3):
-            raise ValueError(
-                "KoopmanCNN expects input_shape to include a channel axis and be "
-                "either (L, C), (H, W, C), or (D, H, W, C)."
-            )
-
-        if self.spatial_ndim == 1:
-            conv_cls = Conv1D
-            pool_cls = MaxPool1D
-            gap_cls = GlobalAveragePooling1D
-        elif self.spatial_ndim == 2:
-            conv_cls = Conv2D
-            pool_cls = MaxPool2D
-            gap_cls = GlobalAveragePooling2D
-        else:
-            conv_cls = Conv3D
-            pool_cls = MaxPool3D
-            gap_cls = GlobalAveragePooling3D
-
-        self.raw_flatten = Flatten(name='raw_flatten')
-        self.conv_blocks = []
-        for i, filters in enumerate(self.conv_filters):
-            block = tf.keras.Sequential([
-                conv_cls(
-                    filters=filters,
-                    kernel_size=self.kernel_size,
-                    padding='same',
-                    use_bias=False,
-                    name=f'conv_{i}'
-                ),
-                BatchNormalization(name=f'bn_{i}'),
-                Activation('relu', name=f'relu_{i}'),
-                pool_cls(pool_size=self.pool_size, name=f'pool_{i}')
-            ], name=f'conv_block_{i}')
-            self.conv_blocks.append(block)
-
-        self.global_pool = gap_cls(name='global_pool')
-        self.hidden_layers = [
-            Dense(size, activation='tanh', name=f'head_dense_{i}')
-            for i, size in enumerate(self.dense_units)
-        ]
-        self.output_layer = Dense(n_psi_train, name='psi_train')
-
-    def call(self, inputs):
-        x = inputs
-        for block in self.conv_blocks:
-            x = block(x)
-        x = self.global_pool(x)
-        for layer in self.hidden_layers:
-            x = layer(x)
-        psi_x_train = self.output_layer(x)
-
-        constant = tf.ones((tf.shape(inputs)[0], 1), dtype=inputs.dtype)
-        if self.include_raw_state:
-            raw_flat = self.raw_flatten(inputs)
-            outputs = tf.concat([constant, raw_flat, psi_x_train], axis=-1)
-        else:
-            outputs = tf.concat([constant, psi_x_train], axis=-1)
-        return outputs
-
-    def get_config(self):
-        config = super(KoopmanCNN, self).get_config()
-        config.update({
-            'input_shape': self.input_shape_spec,
-            'conv_filters': self.conv_filters,
-            'kernel_size': self.kernel_size,
-            'pool_size': self.pool_size,
-            'dense_units': self.dense_units,
-            'n_psi_train': self.n_psi_train,
-            'include_raw_state': self.include_raw_state
-        })
-        return config
-
-    def generate_B(self, inputs):
-        if not self.include_raw_state:
-            raise ValueError(
-                "compute_mode() requires explicit state coordinates. "
-                "Set include_raw_state=True, or rewrite compute_mode to use a "
-                "low-dimensional linear basis / decoder."
-            )
-
-        target_dim = int(np.prod(inputs.shape[1:]))
-        self.basis_func_number = 1 + target_dim + self.n_psi_train
-        self.B = np.zeros((self.basis_func_number, target_dim))
-        self.B[1:1 + target_dim, :] = np.eye(target_dim)
-        return self.B
-
-
-class KoopmanAuxCNN(tf.keras.layers.Layer):
-    def __init__(
-            self,
-            spec_input_shape,
-            aux_dim,
-            conv_filters=(32, 64, 128),
-            kernel_size=3,
-            pool_size=2,
-            dense_units=(128,),
-            n_psi_train=22,
-            **kwargs):
-        super(KoopmanAuxCNN, self).__init__(**kwargs)
-        self.spec_input_shape = tuple(spec_input_shape)
-        self.aux_dim = int(aux_dim)
-        self.conv_filters = tuple(conv_filters)
-        self.kernel_size = kernel_size
-        self.pool_size = pool_size
-        self.dense_units = tuple(dense_units)
-        self.n_psi_train = n_psi_train
-
-        self.spatial_ndim = len(self.spec_input_shape) - 1
-        if self.spatial_ndim not in (1, 2, 3):
-            raise ValueError(
-                "KoopmanAuxCNN expects spec_input_shape to include a channel axis and be "
-                "either (L, C), (H, W, C), or (D, H, W, C)."
-            )
-
-        if self.spatial_ndim == 1:
-            conv_cls = Conv1D
-            pool_cls = MaxPool1D
-            gap_cls = GlobalAveragePooling1D
-        elif self.spatial_ndim == 2:
-            conv_cls = Conv2D
-            pool_cls = MaxPool2D
-            gap_cls = GlobalAveragePooling2D
-        else:
-            conv_cls = Conv3D
-            pool_cls = MaxPool3D
-            gap_cls = GlobalAveragePooling3D
-
-        self.conv_blocks = []
-        for i, filters in enumerate(self.conv_filters):
-            block = tf.keras.Sequential([
-                conv_cls(
-                    filters=filters,
-                    kernel_size=self.kernel_size,
-                    padding='same',
-                    use_bias=False,
-                    name=f'conv_{i}'
-                ),
-                BatchNormalization(name=f'bn_{i}'),
-                Activation('relu', name=f'relu_{i}'),
-                pool_cls(pool_size=self.pool_size, name=f'pool_{i}')
-            ], name=f'conv_block_{i}')
-            self.conv_blocks.append(block)
-
-        self.global_pool = gap_cls(name='global_pool')
-        self.hidden_layers = [
-            Dense(size, activation='tanh', name=f'head_dense_{i}')
-            for i, size in enumerate(self.dense_units)
-        ]
-        self.output_layer = Dense(n_psi_train, name='psi_train')
-
-    def _split_inputs(self, inputs):
-        if isinstance(inputs, dict):
-            if 'spec' not in inputs or 'aux' not in inputs:
-                raise KeyError("KoopmanAuxCNN dict input must contain 'spec' and 'aux'.")
-            spec = inputs['spec']
-            aux = inputs['aux']
-        elif isinstance(inputs, (list, tuple)) and len(inputs) == 2:
-            spec, aux = inputs
-        else:
-            raise TypeError(
-                "KoopmanAuxCNN expects inputs to be either a dict with keys "
-                "'spec'/'aux' or a two-item tuple/list."
-            )
-        return spec, aux
-
-    def call(self, inputs):
-        spec, aux = self._split_inputs(inputs)
-
-        x = spec
-        for block in self.conv_blocks:
-            x = block(x)
-        x = self.global_pool(x)
-        for layer in self.hidden_layers:
-            x = layer(x)
-        psi_x_train = self.output_layer(x)
-
-        constant = tf.ones((tf.shape(spec)[0], 1), dtype=spec.dtype)
-        aux = tf.cast(aux, spec.dtype)
-        outputs = tf.concat([constant, aux, psi_x_train], axis=-1)
-        return outputs
-
-    def get_config(self):
-        config = super(KoopmanAuxCNN, self).get_config()
-        config.update({
-            'spec_input_shape': self.spec_input_shape,
-            'aux_dim': self.aux_dim,
-            'conv_filters': self.conv_filters,
-            'kernel_size': self.kernel_size,
-            'pool_size': self.pool_size,
-            'dense_units': self.dense_units,
-            'n_psi_train': self.n_psi_train
-        })
-        return config
-
-    def generate_B(self, inputs):
-        _, aux = self._split_inputs(inputs)
-        aux_shape = np.shape(aux)
-        if len(aux_shape) < 2:
-            raise ValueError("Auxiliary state must be shaped [batch, aux_dim].")
-
-        target_dim = int(aux_shape[-1])
-        if target_dim != self.aux_dim:
-            raise ValueError(
-                f"Auxiliary state dim ({target_dim}) does not match aux_dim ({self.aux_dim})."
-            )
-
-        self.basis_func_number = 1 + target_dim + self.n_psi_train
-        self.B = np.zeros((self.basis_func_number, target_dim))
-        self.B[1:1 + target_dim, :] = np.eye(target_dim)
         return self.B
 
 
@@ -369,11 +162,7 @@ class KoopmanSolver(object):
         """
         self.dic = dic  # dictionary class
         self.dic_func = dic.call  # dictionary functions
-        if isinstance(target_dim, (tuple, list, tf.TensorShape, np.ndarray)):
-            self.input_shape = tuple(int(dim) for dim in target_dim)
-        else:
-            self.input_shape = (int(target_dim),)
-        self.target_dim = int(np.prod(self.input_shape))
+        self.target_dim = target_dim
         self.reg = reg
         self.residual_form = residual_form
         if self.residual_form not in ('projected_kv', 'projected_vlambda'):
@@ -413,8 +202,9 @@ class KoopmanSolver(object):
         self.best_checkpoint_saved = False
         self.best_checkpoint_path = None
         self.final_checkpoint_path = None
+        self.best_state_path = None
+        self.final_state_path = None
         self.default_checkpoint_root = DEFAULT_CHECKPOINT_ROOT
-        self.input_structure = None
         mixed_precision.set_global_policy(self.training_policy)
 
     def separate_data(self, data):
@@ -422,100 +212,8 @@ class KoopmanSolver(object):
         data_y = data[1]
         return data_x, data_y
 
-    def _is_nested_data(self, data):
-        return isinstance(data, (dict, list, tuple))
-
-    def _flatten_data(self, data):
-        if self._is_nested_data(data):
-            return tf.nest.flatten(data)
-        return [data]
-
-    def _data_length(self, data):
-        first_leaf = self._flatten_data(data)[0]
-        return int(np.shape(first_leaf)[0])
-
-    def _slice_data(self, data, start=None, end=None, indices=None):
-        def _slice_leaf(leaf):
-            if indices is not None:
-                return leaf[indices]
-            return leaf[start:end]
-
-        if self._is_nested_data(data):
-            return tf.nest.map_structure(_slice_leaf, data)
-        return _slice_leaf(data)
-
-    def _convert_data_to_tensor(self, data, dtype):
-        if self._is_nested_data(data):
-            return tf.nest.map_structure(
-                lambda leaf: tf.convert_to_tensor(leaf, dtype=dtype),
-                data
-            )
-        return tf.convert_to_tensor(data, dtype=dtype)
-
-    def _describe_data_shape(self, data):
-        if self._is_nested_data(data):
-            return tf.nest.map_structure(
-                lambda leaf: tuple(int(dim) for dim in np.shape(leaf)),
-                data
-            )
-        return tuple(int(dim) for dim in np.shape(data))
-
-    def _infer_input_structure(self, data):
-        if self._is_nested_data(data):
-            return tf.nest.map_structure(
-                lambda leaf: tuple(int(dim) for dim in np.shape(leaf)[1:]),
-                data
-            )
-        return tuple(int(dim) for dim in np.shape(data)[1:])
-
-    def _matches_unbatched_structure(self, data):
-        if not self._is_nested_data(data) or self.input_structure is None:
-            return False
-
-        leaf_shapes = [
-            tuple(int(dim) for dim in np.shape(leaf))
-            for leaf in self._flatten_data(data)
-        ]
-        expected_shapes = list(tf.nest.flatten(self.input_structure))
-
-        if len(leaf_shapes) != len(expected_shapes):
-            return False
-        return all(shape == expected for shape, expected in zip(leaf_shapes, expected_shapes))
-
-    def _expand_batch_dim(self, data):
-        if self._is_nested_data(data):
-            return tf.nest.map_structure(
-                lambda leaf: np.expand_dims(np.asarray(leaf), axis=0),
-                data
-            )
-        return np.expand_dims(np.asarray(data), axis=0)
-
-    def _batch_size_from_data(self, data):
-        first_leaf = self._flatten_data(data)[0]
-        return tf.shape(first_leaf)[0]
-
-    def _build_input_placeholders(self, sample, prefix):
-        if isinstance(sample, dict):
-            return {
-                key: self._build_input_placeholders(value, f"{prefix}_{key}")
-                for key, value in sample.items()
-            }
-        if isinstance(sample, list):
-            return [
-                self._build_input_placeholders(value, f"{prefix}_{idx}")
-                for idx, value in enumerate(sample)
-            ]
-        if isinstance(sample, tuple):
-            return tuple(
-                self._build_input_placeholders(value, f"{prefix}_{idx}")
-                for idx, value in enumerate(sample)
-            )
-
-        input_shape = tuple(int(dim) for dim in np.shape(sample)[1:])
-        return Input(input_shape, dtype=self.training_input_dtype, name=prefix)
-
     def _normalize_writable_path(self, path_value, default_root):
-        """Normalize writable paths so relative paths land on the AutoDL data disk."""
+        """Normalize writable paths so relative paths land on the local results disk."""
         if path_value is None:
             return None
 
@@ -527,7 +225,7 @@ class KoopmanSolver(object):
 
         read_only_root = os.path.normpath(READ_ONLY_AUTODL_ROOT)
         if normalized_path == read_only_root or normalized_path.startswith(read_only_root + os.sep):
-            raise ValueError("Writable paths under /root/autodl-pub are not allowed.")
+            raise ValueError(f"Writable paths under {READ_ONLY_AUTODL_ROOT} are not allowed.")
 
         return normalized_path
 
@@ -572,21 +270,10 @@ class KoopmanSolver(object):
         print(f"eig_decomp: eigenvector condition number={self.eigvec_cond:.3e}")
         print(f"eig_decomp: done in {time.time() - eig_start:.2f}s")
 
-    def _ensure_batched_input(self, data_x):
-        if self._is_nested_data(data_x):
-            if self._matches_unbatched_structure(data_x):
-                data_x = self._expand_batch_dim(data_x)
-            return data_x
-        data_x = np.asarray(data_x)
-        if tuple(data_x.shape) == self.input_shape:
-            data_x = np.expand_dims(data_x, axis=0)
-        return data_x
-
     def eigenfunctions(self, data_x):
         """ estimated eigenfunctions """
-        data_x = self._ensure_batched_input(data_x)
-        analysis_dic = self._refresh_analysis_dictionary(self._slice_data(data_x, 0, 1))
-        psi_x = analysis_dic(self._convert_data_to_tensor(data_x, self.analysis_dtype)).numpy()
+        analysis_dic = self._refresh_analysis_dictionary(data_x[:1])
+        psi_x = analysis_dic(tf.convert_to_tensor(data_x, dtype=self.analysis_dtype)).numpy()
         psi_x = psi_x.astype(self.spectral_dtype, copy=False)
         val = np.matmul(psi_x, self.eigenvectors)
         return val
@@ -612,24 +299,18 @@ class KoopmanSolver(object):
 
     def predict(self, x0, traj_len):
         """ predict the trajectory """
-        if self._is_nested_data(x0):
-            raise NotImplementedError(
-                "predict() is not supported for multimodal inputs because the "
-                "current solver only reconstructs the explicit low-dimensional state."
-            )
-        x_curr = self._ensure_batched_input(x0)
-        traj = [x_curr]
+        traj = [x0]
         for _ in range(traj_len - 1):
+            x_curr = traj[-1]
             efunc = self.eigenfunctions(x_curr)
             x_next = np.matmul(self.modes, (self.eigenvalues * efunc).T)
-            x_curr = (x_next.real).T.reshape((x_next.shape[1],) + self.input_shape)
-            traj.append(x_curr)
-        traj = np.stack(traj, axis=1)
+            traj.append((x_next.real).T)
+        traj = np.transpose(np.stack(traj, axis=0), [1, 0, 2])
         return traj.squeeze()
 
     def _refresh_analysis_dictionary(self, sample):
-        training_sample = self._convert_data_to_tensor(sample, self.training_input_dtype)
-        _ = self.dic(training_sample)
+        sample = tf.convert_to_tensor(sample, dtype=self.training_input_dtype)
+        _ = self.dic(sample)
 
         dic_cls = self.dic.__class__
         if not hasattr(self.dic, 'get_config'):
@@ -643,7 +324,7 @@ class KoopmanSolver(object):
             else:
                 analysis_dic = dic_cls(**self.dic.get_config())
 
-            analysis_sample = self._convert_data_to_tensor(sample, self.analysis_dtype)
+            analysis_sample = tf.convert_to_tensor(sample, dtype=self.analysis_dtype)
             _ = analysis_dic(analysis_sample)
         finally:
             mixed_precision.set_global_policy(current_policy.name)
@@ -743,26 +424,26 @@ class KoopmanSolver(object):
         Streaming computation of the Koopman matrix with a progress bar.
         """
         compute_k_start = time.time()
-        sample = self._slice_data(data_x, 0, 1)
+        sample = data_x[:1]
         analysis_dic = self._refresh_analysis_dictionary(sample)
-        d = analysis_dic(self._convert_data_to_tensor(sample, self.analysis_dtype)).shape[-1]
+        d = analysis_dic(tf.convert_to_tensor(sample, dtype=self.analysis_dtype)).shape[-1]
 
         # initialize accumulators
         XtX_sum = tf.zeros((d, d), dtype=self.gram_dtype)
         XtY_sum = tf.zeros((d, d), dtype=self.gram_dtype)
         n_total = 0
 
-        total = self._data_length(data_x)
+        total = data_x.shape[0]
 
         print(self.batch_size, total)
         # iterate in batches with tqdm progress bar
         for start in tqdm(range(0, total, self.batch_size), desc="compute_K batches", unit="batch"):
             end = min(start + self.batch_size, total)
-            Xb = self._slice_data(data_x, start, end)
-            Yb = self._slice_data(data_y, start, end)
+            Xb = data_x[start:end]
+            Yb = data_y[start:end]
 
-            psi_x_b = analysis_dic(self._convert_data_to_tensor(Xb, self.analysis_dtype))
-            psi_y_b = analysis_dic(self._convert_data_to_tensor(Yb, self.analysis_dtype))
+            psi_x_b = analysis_dic(tf.convert_to_tensor(Xb, dtype=self.analysis_dtype))
+            psi_y_b = analysis_dic(tf.convert_to_tensor(Yb, dtype=self.analysis_dtype))
             psi_x_b = tf.cast(psi_x_b, self.gram_dtype)
             psi_y_b = tf.cast(psi_y_b, self.gram_dtype)
             batch_n = int(end - start)
@@ -841,11 +522,11 @@ class KoopmanSolver(object):
         return self.Psi_Y
 
     def _compute_dictionary_matrix(self, data):
-        if self._data_length(data) == 0:
+        if data.shape[0] == 0:
             return np.empty((0, 0), dtype=self.spectral_dtype)
 
-        analysis_dic = self._refresh_analysis_dictionary(self._slice_data(data, 0, 1))
-        psi = analysis_dic(self._convert_data_to_tensor(data, self.analysis_dtype)).numpy()
+        analysis_dic = self._refresh_analysis_dictionary(data[:1])
+        psi = analysis_dic(tf.convert_to_tensor(data, dtype=self.analysis_dtype)).numpy()
         return psi.astype(self.spectral_dtype, copy=False)
 
     def _pack_complex_residual(self, residual):
@@ -895,17 +576,10 @@ class KoopmanSolver(object):
         eigvals = tf.cast(self.eigenvalues, self.training_complex_dtype)
         k_matrix = tf.cast(self.K, self.training_real_dtype)
 
-        total = self._data_length(data_x)
-        for start in range(0, total, batch_size):
-            end = min(start + batch_size, total)
-            x_batch = self._convert_data_to_tensor(
-                self._slice_data(data_x, start, end),
-                self.training_input_dtype
-            )
-            y_batch = self._convert_data_to_tensor(
-                self._slice_data(data_y, start, end),
-                self.training_input_dtype
-            )
+        for start in range(0, data_x.shape[0], batch_size):
+            end = min(start + batch_size, data_x.shape[0])
+            x_batch = tf.convert_to_tensor(data_x[start:end], dtype=self.training_input_dtype)
+            y_batch = tf.convert_to_tensor(data_y[start:end], dtype=self.training_input_dtype)
             psi_x = self.dic_func(x_batch)
             psi_y = self.dic_func(y_batch)
 
@@ -939,12 +613,8 @@ class KoopmanSolver(object):
         The loss function is ||Psi(y) - K Psi(x)||^2 .
 
         """
-        if self._is_nested_data(self.data_x_train):
-            inputs_x = self._build_input_placeholders(self.data_x_train, 'input_x')
-            inputs_y = self._build_input_placeholders(self.data_y_train, 'input_y')
-        else:
-            inputs_x = Input(self.input_shape, dtype=self.training_input_dtype)
-            inputs_y = Input(self.input_shape, dtype=self.training_input_dtype)
+        inputs_x = Input((self.target_dim,), dtype=self.training_input_dtype)
+        inputs_y = Input((self.target_dim,), dtype=self.training_input_dtype)
 
         self.psi_x = self.dic_func(inputs_x)
         self.psi_y = self.dic_func(inputs_y)
@@ -1032,14 +702,46 @@ class KoopmanSolver(object):
     #     return (first_derivatives, second_derivatives)
     
 # inside build(), after you have self.data_x_train & self.data_y_train
-    def _make_ds(self, x_array, y_array):
-        x_tensor = self._convert_data_to_tensor(x_array, self.training_input_dtype)
-        y_tensor = self._convert_data_to_tensor(y_array, self.training_input_dtype)
-        ds = tf.data.Dataset.from_tensor_slices((x_tensor, y_tensor))
+    def _make_ds(
+        self,
+        x_array,
+        y_array,
+        shuffle=False,
+        shuffle_buffer_size=None,
+        shuffle_seed=None,
+        reshuffle_each_iteration=True
+    ):
+        x_array = np.asarray(x_array, dtype=self.training_input_dtype.as_numpy_dtype)
+        y_array = np.asarray(y_array, dtype=self.training_input_dtype.as_numpy_dtype)
+        num_samples = int(x_array.shape[0])
+        x_dim = int(x_array.shape[1])
+        y_dim = int(y_array.shape[1])
+
+        ds = tf.data.Dataset.from_tensor_slices(np.arange(num_samples, dtype=np.int64))
+        if shuffle:
+            effective_buffer_size = shuffle_buffer_size
+            if effective_buffer_size is None:
+                effective_buffer_size = num_samples
+            effective_buffer_size = max(1, min(int(effective_buffer_size), num_samples))
+            ds = ds.shuffle(
+                effective_buffer_size,
+                seed=shuffle_seed,
+                reshuffle_each_iteration=reshuffle_each_iteration
+            )
         ds = ds.batch(self.batch_size)
 
-        def map_to_zero(x_batch, y_batch):
-            batch_size = self._batch_size_from_data(x_batch)
+        def map_to_zero(index_batch):
+            def fetch_numpy_batches(index_values):
+                return x_array[index_values], y_array[index_values]
+
+            x_batch, y_batch = tf.numpy_function(
+                fetch_numpy_batches,
+                [index_batch],
+                [self.training_input_dtype, self.training_input_dtype]
+            )
+            x_batch.set_shape([None, x_dim])
+            y_batch.set_shape([None, y_dim])
+            batch_size = tf.shape(index_batch)[0]
             zeros = tf.zeros((batch_size, self.output_dim), dtype=tf.float32)
             return (x_batch, y_batch), zeros
 
@@ -1058,10 +760,21 @@ class KoopmanSolver(object):
             lr_decay_factor,
             Nepoch,
             end_condition=1e-5,
+            train_shuffle=False,
+            shuffle_buffer_size=None,
+            shuffle_seed=None,
+            reshuffle_each_iteration=True,
+            outer_lr_patience=None,
+            outer_lr_cooldown=0,
+            outer_min_lr=0.0,
             checkpoint_path=None,
             best_checkpoint_path=None,
             save_best_only=True,
-            resume=False
+            resume=False,
+            resume_mode=None,
+            final_state_path=None,
+            best_state_path=None,
+            run_metadata=None
         ):
         print("build: start")
         self.data_train = data_train
@@ -1086,20 +799,29 @@ class KoopmanSolver(object):
         )
         self.best_checkpoint_path = best_checkpoint_path
         self.final_checkpoint_path = checkpoint_path
+        if final_state_path is None and checkpoint_path:
+            final_state_path = os.path.join(os.path.dirname(checkpoint_path), 'training_state.json')
+        if best_state_path is None and best_checkpoint_path:
+            best_state_path = os.path.join(os.path.dirname(best_checkpoint_path), 'training_state.json')
+        final_state_path = self._normalize_writable_path(
+            final_state_path,
+            self.default_checkpoint_root
+        )
+        best_state_path = self._normalize_writable_path(
+            best_state_path,
+            self.default_checkpoint_root
+        )
+        self.final_state_path = final_state_path
+        self.best_state_path = best_state_path
+        run_metadata = dict(run_metadata or {})
+        if resume_mode is None:
+            resume_mode = 'final' if resume else 'fresh'
+        resume_mode = str(resume_mode).strip().lower()
+        if resume_mode not in {'fresh', 'final', 'best'}:
+            raise ValueError("resume_mode must be one of: 'fresh', 'final', 'best'.")
         
         self.data_x_train, self.data_y_train = self.separate_data(self.data_train)
-        print(
-            "build: separate_data done, "
-            f"x_train shape={self._describe_data_shape(self.data_x_train)}, "
-            f"y_train shape={self._describe_data_shape(self.data_y_train)}"
-        )
-        self.input_structure = self._infer_input_structure(self.data_x_train)
-        if not self._is_nested_data(self.data_x_train):
-            observed_input_shape = tuple(int(dim) for dim in self.data_x_train.shape[1:])
-            if observed_input_shape != self.input_shape:
-                print(f"build: overriding input_shape from {self.input_shape} to {observed_input_shape}")
-                self.input_shape = observed_input_shape
-                self.target_dim = int(np.prod(self.input_shape))
+        print(f"build: separate_data done, x_train shape={self.data_x_train.shape}, y_train shape={self.data_y_train.shape}")
         self.data_valid = data_valid
 
         print("build: compute_final_info start")
@@ -1117,7 +839,14 @@ class KoopmanSolver(object):
             name='eigenvalues'
         )
 
-        self.ds_train = self._make_ds(self.data_x_train, self.data_y_train)
+        self.ds_train = self._make_ds(
+            self.data_x_train,
+            self.data_y_train,
+            shuffle=train_shuffle,
+            shuffle_buffer_size=shuffle_buffer_size,
+            shuffle_seed=shuffle_seed,
+            reshuffle_each_iteration=reshuffle_each_iteration
+        )
         self.ds_valid = self._make_ds(self.data_valid[0], self.data_valid[1])
 
         # self.zeros_data_y_train = tf.zeros_like(self.dic_func(self.data_y_train))
@@ -1129,13 +858,14 @@ class KoopmanSolver(object):
 
         opt = Adam(lr)
         self.model.compile(optimizer=opt, loss=self._packed_residual_loss)
+        if hasattr(opt, 'build'):
+            opt.build(self.model.trainable_variables)
         self._sync_training_spectral_state()
 
         K_var = tf.Variable(self.K, trainable=False, name='K')
         reg_var = tf.Variable(self.reg, trainable=False, name='reg')
 
         checkpoint = None
-        latest_checkpoint = None
         checkpoint_dir = None
         best_checkpoint_dir = None
         if checkpoint_path or best_checkpoint_path:
@@ -1145,26 +875,56 @@ class KoopmanSolver(object):
                 best_checkpoint_dir = os.path.dirname(best_checkpoint_path) or '.'
             checkpoint = tf.train.Checkpoint(
                 model=self.model,
+                optimizer=opt,
                 K=K_var,
                 eigenvectors=self.eigenvectors_var,
                 eigenvalues=self.eigenvalues_var,
                 reg=reg_var
             )
-        if checkpoint_path:
-            if resume:
-                latest_checkpoint = tf.train.latest_checkpoint(checkpoint_dir)
-                if latest_checkpoint:
-                    checkpoint.restore(latest_checkpoint)
-                    self.K = K_var.numpy()
-                    self.eigenvectors = self.eigenvectors_var.numpy().astype(np.complex128, copy=False)
-                    self.eigenvalues = self.eigenvalues_var.numpy().astype(np.complex128, copy=False)
-                    self.reg = float(reg_var.numpy())
-                    self._sync_training_spectral_state()
-                    print(f"build: restored checkpoint from {latest_checkpoint}")
+        resume_checkpoint_prefix = None
+        resume_state_path = None
+        if resume_mode == 'final':
+            resume_checkpoint_prefix = checkpoint_path
+            resume_state_path = final_state_path
+        elif resume_mode == 'best':
+            resume_checkpoint_prefix = best_checkpoint_path
+            resume_state_path = best_state_path
+
+        latest_checkpoint = None
+        last_restored_checkpoint = None
+        latest_final_saved_checkpoint = None
+        latest_best_saved_checkpoint = None
+        loaded_training_state = None
+        if resume_mode == 'fresh':
+            print("build: resume_mode='fresh', starting without checkpoint restore")
+        elif resume_checkpoint_prefix:
+            resume_checkpoint_dir = os.path.dirname(resume_checkpoint_prefix) or '.'
+            latest_checkpoint = tf.train.latest_checkpoint(resume_checkpoint_dir)
+            if latest_checkpoint:
+                checkpoint.restore(latest_checkpoint)
+                last_restored_checkpoint = latest_checkpoint
+                self.K = K_var.numpy()
+                self.eigenvectors = self.eigenvectors_var.numpy().astype(np.complex128, copy=False)
+                self.eigenvalues = self.eigenvalues_var.numpy().astype(np.complex128, copy=False)
+                self.reg = float(reg_var.numpy())
+                self._sync_training_spectral_state()
+                print(f"build: restored {resume_mode} checkpoint from {latest_checkpoint}")
+            else:
+                print(f"build: no {resume_mode} checkpoint found, starting fresh")
+                resume_mode = 'fresh'
+
+            if resume_mode != 'fresh' and resume_state_path:
+                loaded_training_state = _load_json_file(resume_state_path)
+                if loaded_training_state is None:
+                    print(
+                        f"build: no {resume_mode} trainer state found at {resume_state_path}; "
+                        "continuing with checkpoint-only restore"
+                    )
                 else:
-                    print("build: no checkpoint found, starting fresh")
-        if checkpoint_path and not resume:
-            print("build: resume disabled, skipping checkpoint restore")
+                    print(f"build: loaded {resume_mode} trainer state from {resume_state_path}")
+        else:
+            print(f"build: resume_mode='{resume_mode}' requested but no checkpoint prefix is configured; starting fresh")
+            resume_mode = 'fresh'
         print(f"build: optimizer lr={opt.lr.numpy()}")
 
         losses = []
@@ -1174,6 +934,15 @@ class KoopmanSolver(object):
         best_val_metric = np.inf
         best_outer_epoch = None
         best_checkpoint_saved = False
+        epochs_since_best = 0
+        lr_cooldown_counter = 0
+
+        if outer_lr_patience is not None:
+            outer_lr_patience = int(outer_lr_patience)
+            if outer_lr_patience <= 0:
+                outer_lr_patience = None
+        outer_lr_cooldown = max(0, int(outer_lr_cooldown))
+        outer_min_lr = float(outer_min_lr)
 
         def _sync_checkpoint_state():
             K_var.assign(tf.cast(self.K, K_var.dtype))
@@ -1181,9 +950,98 @@ class KoopmanSolver(object):
             self.eigenvalues_var.assign(tf.cast(self.eigenvalues, self.training_complex_dtype))
             reg_var.assign(tf.cast(self.reg, reg_var.dtype))
 
+        def _save_training_state(state_path, state_kind):
+            if not state_path:
+                return
+
+            payload = {
+                'schema_version': 1,
+                'state_kind': state_kind,
+                'resume_mode': resume_mode,
+                'loss_history': list(losses),
+                'val_loss_history': list(val_losses),
+                'outer_history': self.outer_history,
+                'best_val_metric': self.best_val_metric,
+                'best_outer_epoch': self.best_outer_epoch,
+                'best_outer_index': self.best_outer_index,
+                'best_train_metric': self.best_train_metric,
+                'best_eigvec_cond': self.best_eigvec_cond,
+                'best_lr': self.best_lr,
+                'best_reg': self.best_reg,
+                'best_outer_summary': self.best_outer_summary,
+                'best_checkpoint_saved': bool(self.best_checkpoint_saved),
+                'epochs_since_best': int(epochs_since_best),
+                'lr_cooldown_counter': int(lr_cooldown_counter),
+                'optimizer_lr': float(opt.lr.numpy()),
+                'current_reg': float(self.reg),
+                'current_eigvec_cond': float(self.eigvec_cond) if self.eigvec_cond is not None else None,
+                'completed_outer_epochs': int(len(self.outer_history)),
+                'completed_rounds': int(run_metadata.get('completed_rounds', 0)),
+                'round_number': int(run_metadata.get('round_number', 0)),
+                'run_metadata': run_metadata,
+                'loaded_checkpoint': latest_checkpoint,
+                'restored_checkpoint': last_restored_checkpoint,
+                'checkpoint_prefixes': {
+                    'final': checkpoint_path,
+                    'best': best_checkpoint_path,
+                },
+                'latest_saved_checkpoints': {
+                    'final': latest_final_saved_checkpoint,
+                    'best': latest_best_saved_checkpoint,
+                },
+                'state_paths': {
+                    'final': final_state_path,
+                    'best': best_state_path,
+                },
+            }
+            _save_json_file(state_path, payload)
+
+        def _safe_float(value, default=np.nan):
+            try:
+                if value is None:
+                    return float(default)
+                return float(value)
+            except Exception:
+                return float(default)
+
+        if loaded_training_state is not None:
+            losses = [float(x) for x in loaded_training_state.get('loss_history', [])]
+            val_losses = [float(x) for x in loaded_training_state.get('val_loss_history', [])]
+            self.outer_history = list(loaded_training_state.get('outer_history', []))
+            self.best_val_metric = _safe_float(loaded_training_state.get('best_val_metric', np.nan))
+            self.best_outer_epoch = loaded_training_state.get('best_outer_epoch', None)
+            self.best_outer_index = loaded_training_state.get('best_outer_index', None)
+            self.best_train_metric = _safe_float(loaded_training_state.get('best_train_metric', np.nan))
+            self.best_eigvec_cond = _safe_float(loaded_training_state.get('best_eigvec_cond', np.nan))
+            self.best_lr = _safe_float(loaded_training_state.get('best_lr', np.nan))
+            self.best_reg = _safe_float(loaded_training_state.get('best_reg', np.nan))
+            self.best_outer_summary = dict(loaded_training_state.get('best_outer_summary', {}) or {})
+            self.best_checkpoint_saved = bool(
+                loaded_training_state.get('best_checkpoint_saved', False)
+            )
+            best_val_metric = (
+                self.best_val_metric if np.isfinite(self.best_val_metric) else np.inf
+            )
+            best_outer_epoch = self.best_outer_epoch
+            best_checkpoint_saved = self.best_checkpoint_saved
+            epochs_since_best = int(loaded_training_state.get('epochs_since_best', 0))
+            lr_cooldown_counter = int(loaded_training_state.get('lr_cooldown_counter', 0))
+            restored_lr = loaded_training_state.get('optimizer_lr', None)
+            if restored_lr is not None and np.isfinite(restored_lr):
+                opt.lr.assign(float(restored_lr))
+            print(
+                "build: restored trainer state "
+                f"(outer_history={len(self.outer_history)}, loss_len={len(losses)}, "
+                f"val_loss_len={len(val_losses)})"
+            )
+
+        outer_epoch_offset = len(self.outer_history)
+        target_outer_epoch = outer_epoch_offset + int(epochs)
+
         for i in range(epochs):
             outer_epoch_start = time.time()
-            print(f"build: Outer Epoch {i+1}/{epochs}")
+            current_outer_epoch = outer_epoch_offset + i + 1
+            print(f"build: Outer Epoch {current_outer_epoch}/{target_outer_epoch}")
             print("build: compute_K start")
             self.K = self.compute_K(self.dic_func, self.data_x_train, self.data_y_train, self.reg)
             self.eig_decomp(self.K)
@@ -1200,7 +1058,7 @@ class KoopmanSolver(object):
             self.history = self.train_psi(
                 self.model,
                 epochs=Nepoch,
-                callbacks=[EarlyStopping(monitor='val_loss', min_delta=1e-6, patience=2, verbose=1, mode='min')]
+                callbacks=[EarlyStopping(monitor='val_loss', min_delta=1e-6, patience=2, verbose=1, mode='min', restore_best_weights=True)]
             )
             print(f"build: train_psi done, history length={len(self.history.history['loss'])}")
 
@@ -1220,7 +1078,7 @@ class KoopmanSolver(object):
             train_metric = self.evaluate_spectral_residual(self.data_x_train, self.data_y_train)
             val_metric = self.evaluate_spectral_residual(self.data_valid[0], self.data_valid[1])
             self.outer_history.append({
-                'outer_epoch': i + 1,
+                'outer_epoch': current_outer_epoch,
                 'inner_train_last': inner_train_last,
                 'inner_val_last': inner_val_last,
                 'train_metric': train_metric,
@@ -1243,9 +1101,9 @@ class KoopmanSolver(object):
 
             if current_is_better:
                 best_val_metric = float(val_metric)
-                best_outer_epoch = i + 1
+                best_outer_epoch = current_outer_epoch
                 self.best_val_metric = float(val_metric)
-                self.best_outer_epoch = i + 1
+                self.best_outer_epoch = current_outer_epoch
                 self.best_outer_index = current_outer_index
                 self.best_train_metric = float(train_metric)
                 self.best_eigvec_cond = float(self.eigvec_cond)
@@ -1264,6 +1122,13 @@ class KoopmanSolver(object):
                     f"build: new best outer val_metric={self.best_val_metric:.6e} "
                     f"at epoch {self.best_outer_epoch}"
                 )
+                epochs_since_best = 0
+            else:
+                epochs_since_best += 1
+
+            if i % log_interval == 0:
+                losses.extend(self.history.history['loss'])
+                val_losses.extend(self.history.history['val_loss'])
 
             should_save_best_checkpoint = (
                 checkpoint is not None
@@ -1274,24 +1139,36 @@ class KoopmanSolver(object):
                 if best_checkpoint_dir and not os.path.exists(best_checkpoint_dir):
                     os.makedirs(best_checkpoint_dir, exist_ok=True)
                 _sync_checkpoint_state()
-                checkpoint.save(file_prefix=best_checkpoint_path)
+                latest_best_saved_checkpoint = checkpoint.save(file_prefix=best_checkpoint_path)
                 best_checkpoint_saved = True
                 self.best_checkpoint_saved = True
                 if current_is_better:
                     print("build: best checkpoint saved")
+                _save_training_state(best_state_path, 'best')
 
-            if i % log_interval == 0:
-                losses.extend(self.history.history['loss'])
-                val_losses.extend(self.history.history['val_loss'])
-
-            if len(self.outer_history) > 1:
-                prev_val_metric = self.outer_history[-2]['val_metric']
-                if val_metric > prev_val_metric:
-                    print("build: outer validation metric increased, decaying lr")
-                    opt.lr.assign(opt.lr * lr_decay_factor)
+            if lr_cooldown_counter > 0:
+                lr_cooldown_counter -= 1
+            elif outer_lr_patience is not None and epochs_since_best >= outer_lr_patience:
+                old_lr = float(opt.lr.numpy())
+                new_lr = max(old_lr * lr_decay_factor, outer_min_lr)
+                if new_lr < old_lr:
+                    print(
+                        "build: no outer best improvement for "
+                        f"{epochs_since_best} epoch(s), decaying lr "
+                        f"from {old_lr:.6e} to {new_lr:.6e}"
+                    )
+                    opt.lr.assign(new_lr)
+                else:
+                    print(
+                        "build: outer lr plateau reached but lr is already at "
+                        f"the configured minimum ({outer_min_lr:.6e})"
+                    )
+                epochs_since_best = 0
+                lr_cooldown_counter = outer_lr_cooldown
 
             learning_rate_changes.append(opt.lr.numpy())
-            print(f"build: Outer Epoch {i+1} finished in {time.time() - outer_epoch_start:.2f}s")
+            _save_training_state(final_state_path, 'final')
+            print(f"build: Outer Epoch {current_outer_epoch} finished in {time.time() - outer_epoch_start:.2f}s")
 
             if len(self.outer_history) >= 3:
                 window = min(5, len(self.outer_history))
@@ -1312,7 +1189,8 @@ class KoopmanSolver(object):
         if checkpoint_path:
             if checkpoint_dir and not os.path.exists(checkpoint_dir):
                 os.makedirs(checkpoint_dir, exist_ok=True)
-            checkpoint.save(file_prefix=checkpoint_path)
+            latest_final_saved_checkpoint = checkpoint.save(file_prefix=checkpoint_path)
             print("build: checkpoint saved")
+        _save_training_state(final_state_path, 'final')
 
         return losses, val_losses, stop_flag, learning_rate_changes

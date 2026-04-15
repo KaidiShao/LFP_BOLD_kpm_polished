@@ -1,0 +1,268 @@
+function plot_data = prepare_blp_plot_data(cfg, output_root, prep_cfg)
+%PREPARE_BLP_PLOT_DATA Load reusable data once for BLP plotting scripts.
+
+if nargin < 2 || isempty(output_root)
+    output_root = 'D:\DataPons_processed\';
+end
+
+if nargin < 3
+    prep_cfg = struct();
+end
+
+prep_cfg = local_apply_default_prep_cfg(prep_cfg);
+plot_settings = local_resolve_plot_settings(cfg);
+
+D = load_blp_dataset(cfg);
+t_raw = local_build_global_time_axis(D.session_lengths, D.session_dx);
+t_raw = double(t_raw(:));
+
+R_events = [];
+n_event_bands = 0;
+band_colors = prep_cfg.band_colors;
+
+if prep_cfg.show_events
+    event_input = prep_cfg.event_input;
+    if isempty(event_input) || (ischar(event_input) || isstring(event_input)) && strcmpi(string(event_input), "auto")
+        event_input = [];
+    end
+
+    [R_events, ~] = load_event_results(cfg, output_root, event_input);
+    n_event_bands = size(R_events.DetectResults, 1);
+
+    if size(R_events.DetectResults, 2) ~= size(D.data, 2)
+        error('Event result channel count (%d) does not match loaded data (%d).', ...
+            size(R_events.DetectResults, 2), size(D.data, 2));
+    end
+
+    if isempty(band_colors)
+        band_colors = local_default_band_colors(n_event_bands);
+    end
+
+    if size(band_colors, 1) < n_event_bands || size(band_colors, 2) ~= 3
+        error('band_colors must be an N-by-3 array with at least one row per event band.');
+    end
+end
+
+C_consensus = [];
+if prep_cfg.show_consensus
+    consensus_input = prep_cfg.consensus_input;
+    if isempty(consensus_input) || (ischar(consensus_input) || isstring(consensus_input)) && strcmpi(string(consensus_input), "auto")
+        consensus_input = [];
+    end
+
+    [C_consensus, ~] = load_consensus_state_results(cfg, output_root, consensus_input);
+end
+
+spec_file = '';
+spec_freqs = [];
+spec_regions = {};
+if prep_cfg.include_spectrogram
+    pad_sec = 20;
+    pad_mode = 'mirror';
+
+    if isfield(cfg, 'spectrogram')
+        if isfield(cfg.spectrogram, 'pad_sec')
+            pad_sec = cfg.spectrogram.pad_sec;
+        end
+        if isfield(cfg.spectrogram, 'pad_mode')
+            pad_mode = cfg.spectrogram.pad_mode;
+        end
+    end
+
+    spec_file = local_find_regionmean_spectrogram_file(cfg, output_root, pad_mode, pad_sec);
+    meta = load(spec_file, 'freqs', 'regions');
+    spec_freqs = double(meta.freqs(:));
+    spec_regions = meta.regions;
+end
+
+plot_data = struct();
+plot_data.cfg = cfg;
+plot_data.output_root = output_root;
+plot_data.prep_cfg = prep_cfg;
+plot_data.plot_settings = plot_settings;
+
+plot_data.D = D;
+plot_data.t_raw = t_raw;
+
+plot_data.show_events = logical(prep_cfg.show_events);
+plot_data.R_events = R_events;
+plot_data.n_event_bands = n_event_bands;
+plot_data.band_colors = band_colors;
+
+plot_data.show_consensus = logical(prep_cfg.show_consensus);
+plot_data.C_consensus = C_consensus;
+plot_data.consensus_colors = prep_cfg.consensus_colors;
+plot_data.consensus_face_alpha = prep_cfg.consensus_face_alpha;
+
+plot_data.include_spectrogram = logical(prep_cfg.include_spectrogram);
+plot_data.spec_file = spec_file;
+plot_data.spec_freqs = spec_freqs;
+plot_data.spec_regions = spec_regions;
+end
+
+
+function prep_cfg = local_apply_default_prep_cfg(prep_cfg)
+if ~isfield(prep_cfg, 'show_events')
+    prep_cfg.show_events = false;
+end
+
+if ~isfield(prep_cfg, 'event_input')
+    prep_cfg.event_input = [];
+end
+
+if ~isfield(prep_cfg, 'band_colors')
+    prep_cfg.band_colors = [];
+end
+
+if ~isfield(prep_cfg, 'include_spectrogram')
+    prep_cfg.include_spectrogram = true;
+end
+
+if ~isfield(prep_cfg, 'show_consensus')
+    prep_cfg.show_consensus = false;
+end
+
+if ~isfield(prep_cfg, 'consensus_input')
+    prep_cfg.consensus_input = [];
+end
+
+if ~isfield(prep_cfg, 'consensus_colors') || isempty(prep_cfg.consensus_colors)
+    prep_cfg.consensus_colors = [ ...
+        0.86, 0.74, 0.42; ... % theta
+        0.45, 0.64, 0.90; ... % gamma
+        0.86, 0.55, 0.75; ... % ripple
+        0.63, 0.53, 0.88; ... % theta-gamma
+        0.78, 0.45, 0.60];    % sharp-wave-ripple
+end
+
+if ~isfield(prep_cfg, 'consensus_face_alpha') || isempty(prep_cfg.consensus_face_alpha)
+    prep_cfg.consensus_face_alpha = 0.32;
+end
+end
+
+
+function plot_settings = local_resolve_plot_settings(cfg)
+plot_settings = struct();
+plot_settings.trace_scale = 0.18;
+plot_settings.trace_clip = 4;
+plot_settings.within_gap = 1.4;
+plot_settings.between_gap = 2.2;
+plot_settings.trace_linewidth = 0.4;
+plot_settings.event_linewidth = 1.1;
+plot_settings.border_color = [0.6 0.6 0.6];
+
+if isfield(cfg, 'plot')
+    if isfield(cfg.plot, 'trace_scale')
+        plot_settings.trace_scale = cfg.plot.trace_scale;
+    end
+    if isfield(cfg.plot, 'trace_clip')
+        plot_settings.trace_clip = cfg.plot.trace_clip;
+    end
+    if isfield(cfg.plot, 'within_gap')
+        plot_settings.within_gap = cfg.plot.within_gap;
+    end
+    if isfield(cfg.plot, 'between_gap')
+        plot_settings.between_gap = cfg.plot.between_gap;
+    end
+    if isfield(cfg.plot, 'trace_linewidth')
+        plot_settings.trace_linewidth = cfg.plot.trace_linewidth;
+    end
+    if isfield(cfg.plot, 'event_linewidth')
+        plot_settings.event_linewidth = cfg.plot.event_linewidth;
+    end
+end
+end
+
+
+function t = local_build_global_time_axis(session_lengths, session_dx)
+n_sessions = numel(session_lengths);
+t_cells = cell(n_sessions, 1);
+
+for k = 1:n_sessions
+    n = double(session_lengths(k));
+    dx = double(session_dx(k));
+    t_local = (0:n-1) * dx;
+
+    if k == 1
+        t_global = t_local;
+    else
+        t_prev = t_cells{k-1};
+        t_global = t_local + t_prev(end) + dx;
+    end
+
+    t_cells{k} = t_global;
+end
+
+t = cat(2, t_cells{:});
+t = double(t(:));
+end
+
+
+function spec_file = local_find_regionmean_spectrogram_file(cfg, output_root, pad_mode, pad_sec)
+if strcmpi(pad_mode, 'mirror')
+    pad_tag = sprintf('_mirrorpad_%gs', pad_sec);
+else
+    pad_tag = '_nopad';
+end
+pad_tag = strrep(pad_tag, '.', 'p');
+
+target_name = [cfg.file_stem, pad_tag, '_regionmean_spectrograms_abs.mat'];
+
+search_dirs = { ...
+    fullfile(output_root, cfg.file_stem, 'spectrograms'), ...
+    fullfile(output_root, 'spectrograms', cfg.file_stem)};
+
+for i = 1:numel(search_dirs)
+    f = fullfile(search_dirs{i}, target_name);
+    if exist(f, 'file') == 2
+        spec_file = f;
+        return;
+    end
+end
+
+candidate_file_blocks = cell(numel(search_dirs), 1);
+for i = 1:numel(search_dirs)
+    if exist(search_dirs{i}, 'dir') ~= 7
+        continue;
+    end
+
+    L = dir(fullfile(search_dirs{i}, [cfg.file_stem, '*_regionmean_spectrograms_abs.mat']));
+    if ~isempty(L)
+        candidate_file_blocks{i} = fullfile({L.folder}.', {L.name}.');
+    end
+end
+
+candidate_files = vertcat(candidate_file_blocks{:});
+candidate_files = unique(candidate_files);
+
+if isempty(candidate_files)
+    error(['No saved region-mean spectrogram file was found.\n\n' ...
+        'Checked paths:\n%s\n%s\n\n' ...
+        'Expected file name:\n%s'], ...
+        search_dirs{1}, search_dirs{2}, target_name);
+elseif isscalar(candidate_files)
+    spec_file = candidate_files{1};
+else
+    msg = sprintf('Multiple candidate files were found:\n');
+    for i = 1:numel(candidate_files)
+        msg = sprintf('%s  %s\n', msg, candidate_files{i});
+    end
+    error(msg);
+end
+end
+
+
+function colors = local_default_band_colors(n_bands)
+base = [ ...
+    0.0000, 0.4470, 0.7410; ...
+    0.8500, 0.3250, 0.0980; ...
+    0.4660, 0.6740, 0.1880; ...
+    0.4940, 0.1840, 0.5560; ...
+    0.9290, 0.6940, 0.1250];
+
+if n_bands <= size(base, 1)
+    colors = base(1:n_bands, :);
+else
+    colors = lines(n_bands);
+end
+end

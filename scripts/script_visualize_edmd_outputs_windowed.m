@@ -1,5 +1,6 @@
 this_script_dir = fileparts(mfilename('fullpath'));
 repo_root = fileparts(this_script_dir);
+results_root = get_project_results_root(repo_root);
 addpath(genpath(repo_root));
 
 source_cfg = struct();
@@ -23,12 +24,13 @@ viz_cfg.window_start = 120001;
 viz_cfg.window_length = 3000;
 viz_cfg.dt = [];
 viz_cfg.max_basis = 30;
-viz_cfg.do_timescale = true;
+viz_cfg.do_postprocess_plot = false;
+viz_cfg.do_timescale = false;
 viz_cfg.do_deconv = true;
-viz_cfg.do_deconv_similarity = true;
+viz_cfg.do_deconv_similarity = false;
 viz_cfg.draw_chunk_borders = false;
-viz_cfg.deconv_methods = {'koopman_residual', 'wiener'};
-viz_cfg.deconv_lambda_sources = {'edmd', 'empirical_complex'};
+viz_cfg.deconv_methods = {'koopman_residual'};
+viz_cfg.deconv_lambda_sources = {'edmd'};
 viz_cfg.deconv_plot_normalize_scopes = {'global', 'window'};
 viz_cfg.deconv_normalize_exclude_idx = 1;
 viz_cfg.deconv_similarity_fields = {'abs_all', 'real_all'};
@@ -40,13 +42,13 @@ viz_cfg.timescale_title_prefix = 'EDMD timescale diagnostics';
 viz_cfg.save_figures = true;
 viz_cfg.save_png = true;
 viz_cfg.save_fig = true;
-viz_cfg.save_dir = fullfile(repo_root, 'results', 'edmd_visualization_exports');
-viz_cfg.save_tag = '';
+viz_cfg.save_dir = fullfile(results_root, 'edmd_visualization_exports');
+viz_cfg.save_tag = 'residual_edmd_only';
 
-% [EDMD_outputs, concat_info, source_info] = local_load_edmd_source(source_cfg);
-% 
-% fprintf('EDMD source mode: %s\n', source_info.mode);
-% fprintf('EDMD source path:\n  %s\n', source_info.path);
+[EDMD_outputs, concat_info, source_info] = local_load_edmd_source(source_cfg);
+
+fprintf('EDMD source mode: %s\n', source_info.mode);
+fprintf('EDMD source path:\n  %s\n', source_info.path);
 fprintf('Loaded %d time samples and %d modes.\n', ...
     size(EDMD_outputs.efuns, 1), size(EDMD_outputs.efuns, 2));
 
@@ -68,7 +70,7 @@ opts.abs_thresh = 0.01;
 opts.sort_by = 'modulus';
 opts.sort_dir = 'descend';
 opts.max_basis = viz_cfg.max_basis;
-opts.do_plot = true;
+opts.do_plot = viz_cfg.do_postprocess_plot;
 opts.window_start = viz_cfg.window_start;
 opts.max_plot_samples = viz_cfg.window_length;
 opts.draw_border = false;
@@ -142,7 +144,7 @@ if viz_cfg.do_deconv
                 cfg.plot_normalize_scope = scope_name;
                 cfg.normalize_exclude_idx = viz_cfg.deconv_normalize_exclude_idx;
 
-                fprintf('Plotting deconv comparison: method=%s, lambda=%s, normalization=%s\n', ...
+                fprintf('Plotting deconv: method=%s, lambda=%s, normalization=%s\n', ...
                     method_name, lambda_source, scope_name);
 
                 [~, fig_this, deconv_this] = ...

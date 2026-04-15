@@ -1,5 +1,4 @@
 close all force;
-clear functions;
 
 cfg = cfg_F12m01();
 
@@ -17,9 +16,13 @@ band_colors = [ ...
     0.8500, 0.3250, 0.0980; ...
     0.4660, 0.6740, 0.1880];
 
-plot_blp_segment_with_events( ...
-    cfg, ...
-    output_root, ...
-    time_range_sec, ...
-    [], ...
-    band_colors);
+prep_cfg = struct();
+prep_cfg.show_events = true;
+prep_cfg.event_input = 'auto';
+prep_cfg.band_colors = band_colors;
+prep_cfg.include_spectrogram = false;
+
+plot_data = prepare_blp_plot_data(cfg, output_root, prep_cfg);
+base_plot_cache = build_blp_plot_window_cache(plot_data, time_range_sec);
+
+plot_blp_segment_with_events(base_plot_cache);

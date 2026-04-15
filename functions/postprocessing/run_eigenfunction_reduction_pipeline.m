@@ -136,7 +136,8 @@ if ~isfield(cfg, 'save') || ~isfield(cfg.save, 'enable')
 end
 
 if ~isfield(cfg.save, 'dir') || isempty(cfg.save.dir)
-    cfg.save.dir = fullfile(cfg.repo_root, 'results', 'eigenfunction_reduction');
+    cfg.save.dir = fullfile(get_project_results_root(cfg.repo_root), ...
+        'eigenfunction_reduction');
 end
 
 if ~isfield(cfg.save, 'file_stem') || isempty(cfg.save.file_stem)

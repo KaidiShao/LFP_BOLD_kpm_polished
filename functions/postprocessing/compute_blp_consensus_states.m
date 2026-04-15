@@ -1,0 +1,709 @@
+function C = compute_blp_consensus_states(cfg, output_root, R, params, source_event_file)
+% Compute consensus state labels from saved bandpass event detections.
+%
+% Inputs
+%   cfg               Dataset config struct
+%   output_root       Root folder for processed outputs
+%   R                 Loaded event-detection result struct
+%   params            Struct with consensus-state parameters
+%   source_event_file Optional source event-result file path for metadata
+%
+% Output
+%   C                 Struct containing consensus masks, state labels,
+%                     state windows, and support-count summaries
+
+%% =========================
+%  Input defaults
+%  =========================
+if nargin < 2 || isempty(output_root)
+    output_root = 'D:\DataPons_processed\';
+end
+
+if nargin < 3
+    error('R must be provided. Load it first with load_event_results.');
+end
+
+if nargin < 4
+    params = struct();
+end
+
+if nargin < 5
+    source_event_file = '';
+end
+
+params = apply_default_params(params);
+
+%% =========================
+%  Validate event-detection results
+%  =========================
+if ~isfield(R, 'DetectResults') || isempty(R.DetectResults)
+    error('The loaded event result does not contain DetectResults.');
+end
+
+if isempty(source_event_file) && isfield(R, 'save_file') && ~isempty(R.save_file)
+    source_event_file = R.save_file;
+end
+
+[n_bands, n_channels] = size(R.DetectResults);
+band_labels = get_band_labels(R, n_bands);
+
+[session_ids, session_lengths, session_dx, session_start_idx, session_end_idx, ...
+    dx_ref, L_total] = resolve_time_metadata(R);
+
+channel_sites = get_channel_sites(R, n_channels);
+[regions, channel_region_idx] = resolve_region_metadata(R, channel_sites, n_channels);
+n_regions = numel(regions);
+
+[theta_idx, gamma_idx, ripple_idx] = resolve_band_indices(band_labels, params, n_bands);
+role_idx = [theta_idx, gamma_idx, ripple_idx];
+if numel(unique(role_idx)) ~= 3
+    error('Theta, gamma, and ripple must map to three distinct band indices.');
+end
+
+if isempty(params.min_channel_count)
+    min_channel_count = floor(n_channels / 2) + 1;
+else
+    min_channel_count = double(params.min_channel_count);
+end
+
+if ~isscalar(min_channel_count) || min_channel_count < 1 || min_channel_count > n_channels
+    error('params.min_channel_count must be empty or an integer between 1 and %d.', n_channels);
+end
+
+min_channel_count = round(min_channel_count);
+
+required_region_idx = zeros(1, 0);
+if params.require_region_presence
+    required_region_idx = resolve_required_regions(regions, params.required_regions);
+end
+
+%% =========================
+%  Prepare save path
+%  =========================
+save_dir = fullfile(output_root, cfg.file_stem, 'consensus_states');
+if exist(save_dir, 'dir') ~= 7
+    mkdir(save_dir);
+end
+
+save_tag = build_save_tag(cfg.file_stem, min_channel_count, params.require_region_presence, params.required_regions);
+save_file = fullfile(save_dir, [save_tag, '.mat']);
+
+if exist(save_file, 'file') == 2 && ~params.force_recompute
+    S = load(save_file);
+    C = S.C;
+    return;
+end
+
+%% =========================
+%  Band-level consensus masks
+%  =========================
+consensus_mask_by_band = false(L_total, n_bands);
+channel_support_count_by_band = zeros(L_total, n_bands, 'uint16');
+region_support_count_by_band = zeros(L_total, n_regions, n_bands, 'uint16');
+band_consensus = repmat(struct( ...
+    'name', '', ...
+    'band_index', [], ...
+    'event_win', zeros(0, 2), ...
+    'event_win_session_local', zeros(0, 2), ...
+    'event_session_idx', zeros(0, 1), ...
+    'event_session_id', zeros(0, 1), ...
+    'duration_samples', zeros(0, 1), ...
+    'duration_sec', zeros(0, 1), ...
+    'support_count_max', zeros(0, 1), ...
+    'support_count_mean', zeros(0, 1), ...
+    'region_labels', {cell(0, 1)}, ...
+    'region_support_max', zeros(0, 0), ...
+    'region_support_mean', zeros(0, 0), ...
+    'window_count', 0, ...
+    'total_consensus_samples', 0, ...
+    'total_consensus_duration_sec', 0), n_bands, 1);
+
+for b = 1:n_bands
+    channel_active = build_band_channel_mask(R.DetectResults(b, :), L_total);
+
+    band_support = sum(channel_active, 2);
+    region_support = zeros(L_total, n_regions, 'uint16');
+    for r = 1:n_regions
+        region_support(:, r) = uint16(sum(channel_active(:, channel_region_idx == r), 2));
+    end
+
+    consensus_mask = band_support >= min_channel_count;
+    if params.require_region_presence
+        consensus_mask = consensus_mask & all(region_support(:, required_region_idx) > 0, 2);
+    end
+
+    consensus_mask_by_band(:, b) = consensus_mask;
+    channel_support_count_by_band(:, b) = uint16(band_support);
+    region_support_count_by_band(:, :, b) = region_support;
+
+    band_consensus(b) = build_band_consensus_summary( ...
+        band_labels{b}, ...
+        b, ...
+        consensus_mask, ...
+        uint16(band_support), ...
+        region_support, ...
+        regions, ...
+        session_ids, ...
+        session_dx, ...
+        session_start_idx, ...
+        session_end_idx);
+end
+
+%% =========================
+%  Derived state labels
+%  =========================
+[state_catalog, state_code_by_time] = assign_state_codes( ...
+    consensus_mask_by_band, theta_idx, gamma_idx, ripple_idx);
+
+state_windows = build_state_windows( ...
+    state_code_by_time, ...
+    state_catalog, ...
+    band_labels, ...
+    consensus_mask_by_band, ...
+    channel_support_count_by_band, ...
+    region_support_count_by_band, ...
+    regions, ...
+    session_ids, ...
+    session_dx, ...
+    session_start_idx, ...
+    session_end_idx);
+
+[state_sample_count, state_duration_sec, state_window_count] = ...
+    summarize_state_occupancy(state_code_by_time, state_catalog, session_dx, session_start_idx, session_end_idx, state_windows);
+
+%% =========================
+%  Pack output
+%  =========================
+C = struct();
+C.save_file = save_file;
+C.source_event_file = source_event_file;
+C.dataset_id = cfg.dataset_id;
+C.file_stem = cfg.file_stem;
+
+C.band_labels = band_labels;
+C.band_role_indices = struct('theta', theta_idx, 'gamma', gamma_idx, 'ripple', ripple_idx);
+C.selected_channels = get_optional_field(R, 'selected_channels', []);
+C.channel_sites = channel_sites;
+C.regions = regions;
+C.channel_region_idx = channel_region_idx;
+
+C.session_ids = session_ids;
+C.session_lengths = session_lengths;
+C.session_dx = session_dx;
+C.session_start_idx = session_start_idx;
+C.session_end_idx = session_end_idx;
+C.dx_ref = dx_ref;
+C.L_total = L_total;
+
+C.min_channel_count = min_channel_count;
+C.majority_rule = sprintf('Band consensus requires at least %d/%d channels active at each sample.', ...
+    min_channel_count, n_channels);
+C.require_region_presence = logical(params.require_region_presence);
+C.required_regions = params.required_regions(:);
+
+C.consensus_mask_by_band = consensus_mask_by_band;
+C.channel_support_count_by_band = channel_support_count_by_band;
+C.region_support_count_by_band = region_support_count_by_band;
+C.band_consensus = band_consensus;
+
+C.state_catalog = state_catalog;
+C.state_code_by_time = state_code_by_time;
+C.state_windows = state_windows;
+C.state_sample_count = state_sample_count;
+C.state_duration_sec = state_duration_sec;
+C.state_window_count = state_window_count;
+C.params = params;
+
+save(save_file, 'C', '-v7.3');
+end
+
+
+function params = apply_default_params(params)
+if ~isfield(params, 'min_channel_count')
+    params.min_channel_count = [];
+end
+
+if ~isfield(params, 'theta_band_index')
+    params.theta_band_index = [];
+end
+
+if ~isfield(params, 'gamma_band_index')
+    params.gamma_band_index = [];
+end
+
+if ~isfield(params, 'ripple_band_index')
+    params.ripple_band_index = [];
+end
+
+if ~isfield(params, 'require_region_presence')
+    params.require_region_presence = false;
+end
+
+if ~isfield(params, 'required_regions') || isempty(params.required_regions)
+    params.required_regions = {'hp', 'pl'};
+end
+
+if ~isfield(params, 'force_recompute')
+    params.force_recompute = false;
+end
+end
+
+
+function band_labels = get_band_labels(R, n_bands)
+if isfield(R, 'params') && isfield(R.params, 'band_labels') && numel(R.params.band_labels) >= n_bands
+    band_labels = R.params.band_labels(:);
+else
+    band_labels = cell(n_bands, 1);
+    for b = 1:n_bands
+        band_labels{b} = sprintf('band%d', b);
+    end
+end
+
+for b = 1:n_bands
+    band_labels{b} = char(string(band_labels{b}));
+end
+end
+
+
+function [session_ids, session_lengths, session_dx, session_start_idx, session_end_idx, ...
+    dx_ref, L_total] = resolve_time_metadata(R)
+if isfield(R, 'session_ids') && isfield(R, 'session_lengths') && ...
+        isfield(R, 'session_dx') && isfield(R, 'session_start_idx') && ...
+        isfield(R, 'session_end_idx') && ~isempty(R.session_lengths)
+    session_ids = double(R.session_ids(:));
+    session_lengths = double(R.session_lengths(:));
+    session_dx = double(R.session_dx(:));
+    session_start_idx = double(R.session_start_idx(:));
+    session_end_idx = double(R.session_end_idx(:));
+    dx_ref = median(session_dx);
+    L_total = sum(session_lengths);
+    return;
+end
+
+[dx_ref, L_total] = infer_dt_and_length(R.DetectResults);
+session_ids = 1;
+session_lengths = L_total;
+session_dx = dx_ref;
+session_start_idx = 1;
+session_end_idx = L_total;
+end
+
+
+function channel_sites = get_channel_sites(R, n_channels)
+if isfield(R, 'channel_sites') && numel(R.channel_sites) >= n_channels
+    channel_sites = R.channel_sites(:);
+    return;
+end
+
+channel_sites = cell(n_channels, 1);
+for c = 1:n_channels
+    S = R.DetectResults{1, c};
+    if ~isempty(S) && isfield(S, 'channel_site') && ~isempty(S.channel_site)
+        channel_sites{c} = char(string(S.channel_site));
+    else
+        channel_sites{c} = '';
+    end
+end
+end
+
+
+function [regions, channel_region_idx] = resolve_region_metadata(R, channel_sites, n_channels)
+if isfield(R, 'regions') && ~isempty(R.regions) && ...
+        isfield(R, 'channel_region_idx') && numel(R.channel_region_idx) >= n_channels
+    regions = R.regions(:);
+    channel_region_idx = double(R.channel_region_idx(:))';
+    return;
+end
+
+if ~isempty(channel_sites) && any(~cellfun(@isempty, channel_sites))
+    regions = unique(channel_sites, 'stable');
+    channel_region_idx = zeros(1, n_channels);
+    for c = 1:n_channels
+        ridx = find(strcmp(regions, channel_sites{c}), 1, 'first');
+        if isempty(ridx)
+            error('Could not map channel site "%s" to a region.', channel_sites{c});
+        end
+        channel_region_idx(c) = ridx;
+    end
+    return;
+end
+
+regions = {'all'};
+channel_region_idx = ones(1, n_channels);
+end
+
+
+function [theta_idx, gamma_idx, ripple_idx] = resolve_band_indices(band_labels, params, n_bands)
+theta_idx = resolve_single_band_index(params.theta_band_index, band_labels, 'theta', n_bands);
+gamma_idx = resolve_single_band_index(params.gamma_band_index, band_labels, 'gamma', n_bands);
+ripple_idx = resolve_single_band_index(params.ripple_band_index, band_labels, 'ripple', n_bands);
+end
+
+
+function idx = resolve_single_band_index(explicit_idx, band_labels, target_label, n_bands)
+if ~isempty(explicit_idx)
+    idx = double(explicit_idx);
+    if ~isscalar(idx) || idx < 1 || idx > n_bands || idx ~= round(idx)
+        error('Explicit %s band index must be an integer between 1 and %d.', target_label, n_bands);
+    end
+    return;
+end
+
+labels_norm = cellfun(@normalize_token, band_labels, 'UniformOutput', false);
+target_norm = normalize_token(target_label);
+idx = find(strcmp(labels_norm, target_norm), 1, 'first');
+
+if isempty(idx)
+    error('Could not infer the %s band from R.params.band_labels. Please set params.%s_band_index explicitly.', ...
+        target_label, target_label);
+end
+end
+
+
+function required_region_idx = resolve_required_regions(regions, required_regions)
+required_region_idx = zeros(1, numel(required_regions));
+
+for i = 1:numel(required_regions)
+    wanted = normalize_token(required_regions{i});
+    found = false;
+
+    for r = 1:numel(regions)
+        if strcmp(normalize_token(regions{r}), wanted)
+            required_region_idx(i) = r;
+            found = true;
+            break;
+        end
+    end
+
+    if ~found
+        error('Required region "%s" is not present in R.regions.', char(string(required_regions{i})));
+    end
+end
+end
+
+
+function channel_active = build_band_channel_mask(DetectResultsBand, L_total)
+n_channels = numel(DetectResultsBand);
+channel_active = false(L_total, n_channels);
+
+for c = 1:n_channels
+    S = DetectResultsBand{c};
+    if isempty(S) || ~isfield(S, 'event_win') || isempty(S.event_win)
+        continue;
+    end
+
+    win = round(double(S.event_win));
+    win(:, 1) = max(win(:, 1), 1);
+    win(:, 2) = min(win(:, 2), L_total);
+    win = win(win(:, 2) >= win(:, 1), :);
+
+    if isempty(win)
+        continue;
+    end
+
+    starts = win(:, 1);
+    stops = win(:, 2) + 1;
+
+    delta = zeros(L_total + 1, 1);
+    delta = delta + accumarray(starts, 1, [L_total + 1, 1], @sum, 0);
+
+    valid_stop = stops <= L_total;
+    if any(valid_stop)
+        delta = delta - accumarray(stops(valid_stop), 1, [L_total + 1, 1], @sum, 0);
+    end
+
+    channel_active(:, c) = cumsum(delta(1:L_total)) > 0;
+end
+end
+
+
+function band_info = build_band_consensus_summary( ...
+    band_label, band_index, consensus_mask, band_support, region_support, regions, ...
+    session_ids, session_dx, session_start_idx, session_end_idx)
+[event_win, event_win_session_local, event_session_idx, event_session_id] = ...
+    logical_mask_to_windows(consensus_mask, session_ids, session_start_idx, session_end_idx);
+
+n_windows = size(event_win, 1);
+n_regions = size(region_support, 2);
+
+duration_samples = zeros(n_windows, 1);
+duration_sec = zeros(n_windows, 1);
+support_count_max = zeros(n_windows, 1);
+support_count_mean = zeros(n_windows, 1);
+region_support_max = zeros(n_windows, n_regions);
+region_support_mean = zeros(n_windows, n_regions);
+
+for i = 1:n_windows
+    g1 = event_win(i, 1);
+    g2 = event_win(i, 2);
+
+    duration_samples(i) = g2 - g1 + 1;
+    duration_sec(i) = duration_samples(i) * double(session_dx(event_session_idx(i)));
+
+    support_seg = double(band_support(g1:g2));
+    support_count_max(i) = max(support_seg);
+    support_count_mean(i) = mean(support_seg);
+
+    region_support_max(i, :) = max(double(region_support(g1:g2, :)), [], 1);
+    region_support_mean(i, :) = mean(double(region_support(g1:g2, :)), 1);
+end
+
+band_info = struct();
+band_info.name = band_label;
+band_info.band_index = band_index;
+band_info.event_win = event_win;
+band_info.event_win_session_local = event_win_session_local;
+band_info.event_session_idx = event_session_idx;
+band_info.event_session_id = event_session_id;
+band_info.duration_samples = duration_samples;
+band_info.duration_sec = duration_sec;
+band_info.support_count_max = support_count_max;
+band_info.support_count_mean = support_count_mean;
+band_info.region_labels = regions(:);
+band_info.region_support_max = region_support_max;
+band_info.region_support_mean = region_support_mean;
+band_info.window_count = n_windows;
+band_info.total_consensus_samples = nnz(consensus_mask);
+band_info.total_consensus_duration_sec = compute_mask_duration_sec( ...
+    consensus_mask, session_dx, session_start_idx, session_end_idx);
+end
+
+
+function [state_catalog, state_code_by_time] = assign_state_codes(consensus_mask_by_band, theta_idx, gamma_idx, ripple_idx)
+state_catalog = struct( ...
+    'code', num2cell(uint8([1; 2; 3; 4; 5])), ...
+    'label', {'theta'; 'gamma'; 'ripple'; 'theta-gamma'; 'sharp-wave-ripple'}, ...
+    'description', { ...
+        'Consensus theta only'; ...
+        'Consensus gamma only'; ...
+        'Consensus ripple, including gamma+ripple'; ...
+        'Consensus theta+gamma without ripple'; ...
+        'Consensus theta+ripple, optionally including gamma'});
+
+n_time = size(consensus_mask_by_band, 1);
+state_code_by_time = zeros(n_time, 1, 'uint8');
+
+has_theta = consensus_mask_by_band(:, theta_idx);
+has_gamma = consensus_mask_by_band(:, gamma_idx);
+has_ripple = consensus_mask_by_band(:, ripple_idx);
+
+state_code_by_time(has_theta & has_ripple) = uint8(5);
+
+remaining = (state_code_by_time == 0);
+state_code_by_time(remaining & has_theta & has_gamma) = uint8(4);
+
+remaining = (state_code_by_time == 0);
+state_code_by_time(remaining & has_theta) = uint8(1);
+
+remaining = (state_code_by_time == 0);
+state_code_by_time(remaining & has_gamma & ~has_ripple) = uint8(2);
+
+remaining = (state_code_by_time == 0);
+state_code_by_time(remaining & has_ripple) = uint8(3);
+end
+
+
+function state_windows = build_state_windows( ...
+    state_code_by_time, state_catalog, band_labels, consensus_mask_by_band, ...
+    channel_support_count_by_band, region_support_count_by_band, regions, ...
+    session_ids, session_dx, session_start_idx, session_end_idx)
+n_regions = numel(regions);
+n_bands = numel(band_labels);
+n_sessions = numel(session_ids);
+
+state_windows = struct([]);
+idx_out = 0;
+
+for k = 1:n_sessions
+    idx1 = session_start_idx(k);
+    idx2 = session_end_idx(k);
+    state_seg = double(state_code_by_time(idx1:idx2));
+
+    if ~any(state_seg > 0)
+        continue;
+    end
+
+    change_idx = find([true; diff(state_seg) ~= 0]);
+    run_start_local = change_idx;
+    run_end_local = [change_idx(2:end) - 1; numel(state_seg)];
+
+    for i = 1:numel(run_start_local)
+        code = uint8(state_seg(run_start_local(i)));
+        if code == 0
+            continue;
+        end
+
+        g1 = idx1 + run_start_local(i) - 1;
+        g2 = idx1 + run_end_local(i) - 1;
+
+        band_any = any(consensus_mask_by_band(g1:g2, :), 1);
+        band_all = all(consensus_mask_by_band(g1:g2, :), 1);
+        support_seg = double(channel_support_count_by_band(g1:g2, :));
+
+        region_support_max = zeros(n_regions, n_bands);
+        region_support_mean = zeros(n_regions, n_bands);
+        for r = 1:n_regions
+            for b = 1:n_bands
+                trace_rb = double(region_support_count_by_band(g1:g2, r, b));
+                region_support_max(r, b) = max(trace_rb);
+                region_support_mean(r, b) = mean(trace_rb);
+            end
+        end
+
+        idx_out = idx_out + 1;
+        state_windows(idx_out).state_code = code;
+        state_windows(idx_out).state_label = state_catalog(double(code)).label;
+        state_windows(idx_out).win_global = [g1, g2];
+        state_windows(idx_out).win_session_local = [run_start_local(i), run_end_local(i)];
+        state_windows(idx_out).session_idx = k;
+        state_windows(idx_out).session_id = session_ids(k);
+        state_windows(idx_out).duration_samples = g2 - g1 + 1;
+        state_windows(idx_out).duration_sec = (g2 - g1 + 1) * double(session_dx(k));
+        state_windows(idx_out).consensus_band_any = band_any;
+        state_windows(idx_out).consensus_band_all = band_all;
+        state_windows(idx_out).consensus_band_labels_any = labels_from_mask(band_any, band_labels);
+        state_windows(idx_out).consensus_band_labels_all = labels_from_mask(band_all, band_labels);
+        state_windows(idx_out).channel_support_max_by_band = max(support_seg, [], 1);
+        state_windows(idx_out).channel_support_mean_by_band = mean(support_seg, 1);
+        state_windows(idx_out).region_labels = regions(:);
+        state_windows(idx_out).region_support_max_by_band = region_support_max;
+        state_windows(idx_out).region_support_mean_by_band = region_support_mean;
+        state_windows(idx_out).region_support_max_any_band = max(region_support_max, [], 2);
+    end
+end
+end
+
+
+function [state_sample_count, state_duration_sec, state_window_count] = ...
+    summarize_state_occupancy(state_code_by_time, state_catalog, session_dx, session_start_idx, session_end_idx, state_windows)
+n_states = numel(state_catalog);
+state_sample_count = zeros(n_states, 1);
+state_duration_sec = zeros(n_states, 1);
+state_window_count = zeros(n_states, 1);
+
+for s = 1:n_states
+    code = state_catalog(s).code;
+    mask = (state_code_by_time == code);
+    state_sample_count(s) = nnz(mask);
+    state_duration_sec(s) = compute_mask_duration_sec(mask, session_dx, session_start_idx, session_end_idx);
+end
+
+if isempty(state_windows)
+    return;
+end
+
+window_codes = double([state_windows.state_code]);
+for s = 1:n_states
+    state_window_count(s) = sum(window_codes == double(state_catalog(s).code));
+end
+end
+
+
+function [event_win, event_win_session_local, event_session_idx, event_session_id] = ...
+    logical_mask_to_windows(mask, session_ids, session_start_idx, session_end_idx)
+n_sessions = numel(session_ids);
+
+event_win = zeros(0, 2);
+event_win_session_local = zeros(0, 2);
+event_session_idx = zeros(0, 1);
+event_session_id = zeros(0, 1);
+
+for k = 1:n_sessions
+    idx1 = session_start_idx(k);
+    idx2 = session_end_idx(k);
+    seg_mask = logical(mask(idx1:idx2));
+
+    if ~any(seg_mask)
+        continue;
+    end
+
+    d = diff([false; seg_mask(:); false]);
+    start_local = find(d == 1);
+    end_local = find(d == -1) - 1;
+    n_new = numel(start_local);
+
+    event_win = [event_win; [idx1 + start_local - 1, idx1 + end_local - 1]]; %#ok<AGROW>
+    event_win_session_local = [event_win_session_local; [start_local, end_local]]; %#ok<AGROW>
+    event_session_idx = [event_session_idx; repmat(k, n_new, 1)]; %#ok<AGROW>
+    event_session_id = [event_session_id; repmat(session_ids(k), n_new, 1)]; %#ok<AGROW>
+end
+end
+
+
+function duration_sec = compute_mask_duration_sec(mask, session_dx, session_start_idx, session_end_idx)
+duration_sec = 0;
+
+for k = 1:numel(session_dx)
+    idx1 = session_start_idx(k);
+    idx2 = session_end_idx(k);
+    duration_sec = duration_sec + nnz(mask(idx1:idx2)) * double(session_dx(k));
+end
+end
+
+
+function label_list = labels_from_mask(mask, labels)
+label_list = labels(logical(mask(:)));
+label_list = label_list(:);
+end
+
+
+function value = get_optional_field(S, field_name, default_value)
+if isfield(S, field_name)
+    value = S.(field_name);
+else
+    value = default_value;
+end
+end
+
+
+function [dx_ref, L_total] = infer_dt_and_length(DetectResults)
+dx_ref = [];
+L_total = [];
+
+for i = 1:numel(DetectResults)
+    S = DetectResults{i};
+    if isempty(S)
+        continue;
+    end
+
+    if isfield(S, 'dx') && ~isempty(S.dx)
+        dx_val = double(S.dx);
+        if dx_val > 1
+            dx_ref = 1 / dx_val;
+        else
+            dx_ref = dx_val;
+        end
+    end
+
+    if isfield(S, 'L_total') && ~isempty(S.L_total)
+        L_total = double(S.L_total);
+    end
+
+    if ~isempty(dx_ref) && ~isempty(L_total)
+        return;
+    end
+end
+
+if isempty(dx_ref) || isempty(L_total)
+    error('Could not infer dt and total length from DetectResults.');
+end
+end
+
+
+function token = normalize_token(label)
+token = lower(strtrim(char(string(label))));
+token = regexprep(token, '[^a-z0-9]+', '');
+end
+
+
+function tag = build_save_tag(file_stem, min_channel_count, require_region_presence, required_regions)
+tag = sprintf('%s_consensus_states_min%dch', file_stem, min_channel_count);
+
+if require_region_presence
+    region_tokens = cell(numel(required_regions), 1);
+    for i = 1:numel(required_regions)
+        region_tokens{i} = normalize_token(required_regions{i});
+    end
+    tag = sprintf('%s_regions_%s', tag, strjoin(region_tokens, '-'));
+end
+end
