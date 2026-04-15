@@ -5,7 +5,6 @@ import shutil
 import sys
 from pathlib import Path
 
-
 def resolve_local_results_root():
     env_root = os.environ.get('LFP_BOLD_KPM_RESULTS_ROOT')
     if env_root:

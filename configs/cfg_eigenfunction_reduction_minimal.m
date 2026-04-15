@@ -130,7 +130,6 @@ cfg.viz.state_space.title = 'State-Space Trajectory';
 cfg.viz.state_space.save_figure = false;
 cfg.viz.state_space.save_dir = fullfile(results_root, 'eigenfunction_reduction');
 cfg.viz.state_space.save_tag = 'state_space';
-
 cfg.save = struct();
 cfg.save.enable = true;
 cfg.save.dir = fullfile(results_root, 'eigenfunction_reduction');

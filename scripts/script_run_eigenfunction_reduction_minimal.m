@@ -32,7 +32,6 @@ if isfield(cfg, 'viz') && isfield(cfg.viz, 'state_space') && cfg.viz.state_space
         state_space_save_path = state_space_info.save_path;
     end
 end
-
 fprintf('Loaded EDMD source mode: %s\n', source_info.mode);
 fprintf('Input size: T=%d, N=%d\n', ...
     size(result.data.efun_feature_time_by_mode, 1), ...
@@ -59,10 +58,10 @@ end
 if ~isempty(state_space_save_path)
     fprintf('Saved state-space figure to:\n  %s\n', state_space_save_path);
 end
-
 if ~isempty(concat_info)
     fprintf('Concatenated %d chunks into %d samples.\n', ...
         concat_info.n_chunks, concat_info.total_length);
 end
 
+clear EDMD_outputs concat_info source_info fig_overview fig_spectrum fig_state_space overview_info spectrum_info state_space_info
 clear EDMD_outputs concat_info source_info fig_overview fig_spectrum fig_state_space overview_info spectrum_info state_space_info
