@@ -9,14 +9,14 @@ function C = compute_blp_consensus_states(cfg, output_root, R, params, source_ev
 %   source_event_file Optional source event-result file path for metadata
 %
 % Output
-%   C                 Struct containing consensus masks, state labels,
-%                     state windows, and support-count summaries
+%   C                 Struct containing band-level consensus masks plus
+%                     event-window-defined state labels and summaries
 
 %% =========================
 %  Input defaults
 %  =========================
 if nargin < 2 || isempty(output_root)
-    output_root = 'D:\DataPons_processed\';
+    output_root = get_project_processed_root();
 end
 
 if nargin < 3
@@ -32,6 +32,7 @@ if nargin < 5
 end
 
 params = apply_default_params(params);
+validate_params(params);
 
 %% =========================
 %  Validate event-detection results
@@ -87,11 +88,16 @@ end
 
 save_tag = build_save_tag(cfg.file_stem, min_channel_count, params.require_region_presence, params.required_regions);
 save_file = fullfile(save_dir, [save_tag, '.mat']);
+source_event_file_signature = build_file_signature(source_event_file);
+band_role_indices = struct('theta', theta_idx, 'gamma', gamma_idx, 'ripple', ripple_idx);
 
 if exist(save_file, 'file') == 2 && ~params.force_recompute
     S = load(save_file);
-    C = S.C;
-    return;
+    if isfield(S, 'C') && can_reuse_saved_result( ...
+            S.C, params, min_channel_count, band_role_indices, source_event_file_signature)
+        C = S.C;
+        return;
+    end
 end
 
 %% =========================
@@ -152,21 +158,23 @@ end
 %% =========================
 %  Derived state labels
 %  =========================
-[state_catalog, state_code_by_time] = assign_state_codes( ...
-    consensus_mask_by_band, theta_idx, gamma_idx, ripple_idx);
+state_catalog = build_state_catalog();
 
-state_windows = build_state_windows( ...
-    state_code_by_time, ...
+[state_windows, state_code_by_time] = build_event_defined_state_windows( ...
     state_catalog, ...
     band_labels, ...
+    band_consensus, ...
     consensus_mask_by_band, ...
     channel_support_count_by_band, ...
     region_support_count_by_band, ...
     regions, ...
+    theta_idx, ...
+    gamma_idx, ...
+    ripple_idx, ...
     session_ids, ...
     session_dx, ...
     session_start_idx, ...
-    session_end_idx);
+    params.state_merge_gap_samples);
 
 [state_sample_count, state_duration_sec, state_window_count] = ...
     summarize_state_occupancy(state_code_by_time, state_catalog, session_dx, session_start_idx, session_end_idx, state_windows);
@@ -177,11 +185,12 @@ state_windows = build_state_windows( ...
 C = struct();
 C.save_file = save_file;
 C.source_event_file = source_event_file;
+C.source_event_file_signature = source_event_file_signature;
 C.dataset_id = cfg.dataset_id;
 C.file_stem = cfg.file_stem;
 
 C.band_labels = band_labels;
-C.band_role_indices = struct('theta', theta_idx, 'gamma', gamma_idx, 'ripple', ripple_idx);
+C.band_role_indices = band_role_indices;
 C.selected_channels = get_optional_field(R, 'selected_channels', []);
 C.channel_sites = channel_sites;
 C.regions = regions;
@@ -200,6 +209,12 @@ C.majority_rule = sprintf('Band consensus requires at least %d/%d channels activ
     min_channel_count, n_channels);
 C.require_region_presence = logical(params.require_region_presence);
 C.required_regions = params.required_regions(:);
+C.state_definition_mode = char(string(params.state_definition_mode));
+C.state_merge_gap_samples = double(params.state_merge_gap_samples);
+C.state_definition_rule = sprintf([ ...
+    'State windows are formed by merging overlapping consensus theta/gamma/ripple events within each session ' ...
+    '(merge gap = %d samples) and assigning one label per merged window.'], ...
+    double(params.state_merge_gap_samples));
 
 C.consensus_mask_by_band = consensus_mask_by_band;
 C.channel_support_count_by_band = channel_support_count_by_band;
@@ -243,9 +258,100 @@ if ~isfield(params, 'required_regions') || isempty(params.required_regions)
     params.required_regions = {'hp', 'pl'};
 end
 
+if ~isfield(params, 'state_definition_mode') || isempty(params.state_definition_mode)
+    params.state_definition_mode = 'event_windows';
+end
+
+if ~isfield(params, 'state_merge_gap_samples') || isempty(params.state_merge_gap_samples)
+    params.state_merge_gap_samples = 0;
+end
+
 if ~isfield(params, 'force_recompute')
     params.force_recompute = false;
 end
+end
+
+
+function validate_params(params)
+mode_name = validatestring(char(string(params.state_definition_mode)), {'event_windows'});
+if ~strcmp(mode_name, 'event_windows')
+    error('Unsupported params.state_definition_mode: %s', char(string(params.state_definition_mode)));
+end
+
+gap_samples = double(params.state_merge_gap_samples);
+if ~isscalar(gap_samples) || gap_samples < 0 || gap_samples ~= round(gap_samples)
+    error('params.state_merge_gap_samples must be a nonnegative integer.');
+end
+end
+
+
+function tf = can_reuse_saved_result(C, params, min_channel_count, band_role_indices, source_event_file_signature)
+tf = isstruct(C);
+if ~tf
+    return;
+end
+
+required_fields = {'state_definition_mode', 'state_merge_gap_samples', 'min_channel_count', ...
+    'require_region_presence', 'band_role_indices', 'source_event_file_signature'};
+for i = 1:numel(required_fields)
+    if ~isfield(C, required_fields{i}) || isempty(C.(required_fields{i}))
+        tf = false;
+        return;
+    end
+end
+
+if ~isfield(C, 'state_definition_mode') || isempty(C.state_definition_mode)
+    tf = false;
+    return;
+end
+
+tf = strcmpi(char(string(C.state_definition_mode)), char(string(params.state_definition_mode)));
+if ~tf
+    return;
+end
+
+if ~isfield(C, 'state_merge_gap_samples') || isempty(C.state_merge_gap_samples)
+    tf = false;
+    return;
+end
+
+tf = double(C.state_merge_gap_samples) == double(params.state_merge_gap_samples);
+if ~tf
+    return;
+end
+
+tf = double(C.min_channel_count) == double(min_channel_count);
+if ~tf
+    return;
+end
+
+tf = logical(C.require_region_presence) == logical(params.require_region_presence);
+if ~tf
+    return;
+end
+
+if params.require_region_presence
+    if ~isfield(C, 'required_regions') || isempty(C.required_regions)
+        tf = false;
+        return;
+    end
+
+    tf = isequal( ...
+        normalize_region_list(C.required_regions), ...
+        normalize_region_list(params.required_regions));
+    if ~tf
+        return;
+    end
+end
+
+tf = isequal(double(C.band_role_indices.theta), double(band_role_indices.theta)) && ...
+    isequal(double(C.band_role_indices.gamma), double(band_role_indices.gamma)) && ...
+    isequal(double(C.band_role_indices.ripple), double(band_role_indices.ripple));
+if ~tf
+    return;
+end
+
+tf = file_signature_matches(C.source_event_file_signature, source_event_file_signature);
 end
 
 
@@ -469,77 +575,54 @@ band_info.total_consensus_duration_sec = compute_mask_duration_sec( ...
 end
 
 
-function [state_catalog, state_code_by_time] = assign_state_codes(consensus_mask_by_band, theta_idx, gamma_idx, ripple_idx)
+function state_catalog = build_state_catalog()
 state_catalog = struct( ...
     'code', num2cell(uint8([1; 2; 3; 4; 5])), ...
     'label', {'theta'; 'gamma'; 'ripple'; 'theta-gamma'; 'sharp-wave-ripple'}, ...
     'description', { ...
-        'Consensus theta only'; ...
-        'Consensus gamma only'; ...
-        'Consensus ripple, including gamma+ripple'; ...
-        'Consensus theta+gamma without ripple'; ...
-        'Consensus theta+ripple, optionally including gamma'});
-
-n_time = size(consensus_mask_by_band, 1);
-state_code_by_time = zeros(n_time, 1, 'uint8');
-
-has_theta = consensus_mask_by_band(:, theta_idx);
-has_gamma = consensus_mask_by_band(:, gamma_idx);
-has_ripple = consensus_mask_by_band(:, ripple_idx);
-
-state_code_by_time(has_theta & has_ripple) = uint8(5);
-
-remaining = (state_code_by_time == 0);
-state_code_by_time(remaining & has_theta & has_gamma) = uint8(4);
-
-remaining = (state_code_by_time == 0);
-state_code_by_time(remaining & has_theta) = uint8(1);
-
-remaining = (state_code_by_time == 0);
-state_code_by_time(remaining & has_gamma & ~has_ripple) = uint8(2);
-
-remaining = (state_code_by_time == 0);
-state_code_by_time(remaining & has_ripple) = uint8(3);
+        'Merged consensus-event window containing theta only'; ...
+        'Merged consensus-event window containing gamma only'; ...
+        'Merged consensus-event window containing ripple, including gamma+ripple'; ...
+        'Merged consensus-event window containing theta+gamma without ripple'; ...
+        'Merged consensus-event window containing theta+ripple, optionally including gamma'});
 end
 
 
-function state_windows = build_state_windows( ...
-    state_code_by_time, state_catalog, band_labels, consensus_mask_by_band, ...
+function [state_windows, state_code_by_time] = build_event_defined_state_windows( ...
+    state_catalog, band_labels, band_consensus, consensus_mask_by_band, ...
     channel_support_count_by_band, region_support_count_by_band, regions, ...
-    session_ids, session_dx, session_start_idx, session_end_idx)
+    theta_idx, gamma_idx, ripple_idx, session_ids, session_dx, session_start_idx, merge_gap_samples)
 n_regions = numel(regions);
 n_bands = numel(band_labels);
 n_sessions = numel(session_ids);
+n_time = size(consensus_mask_by_band, 1);
 
 state_windows = struct([]);
+state_code_by_time = zeros(n_time, 1, 'uint8');
 idx_out = 0;
+role_band_indices = [theta_idx, gamma_idx, ripple_idx];
 
 for k = 1:n_sessions
-    idx1 = session_start_idx(k);
-    idx2 = session_end_idx(k);
-    state_seg = double(state_code_by_time(idx1:idx2));
-
-    if ~any(state_seg > 0)
+    session_event_rows = collect_session_role_events(band_consensus, role_band_indices, k);
+    if isempty(session_event_rows)
         continue;
     end
 
-    change_idx = find([true; diff(state_seg) ~= 0]);
-    run_start_local = change_idx;
-    run_end_local = [change_idx(2:end) - 1; numel(state_seg)];
+    merged_windows = merge_session_event_rows(session_event_rows, merge_gap_samples, n_bands);
+    for i = 1:numel(merged_windows)
+        g1 = merged_windows(i).start_idx;
+        g2 = merged_windows(i).end_idx;
 
-    for i = 1:numel(run_start_local)
-        code = uint8(state_seg(run_start_local(i)));
+        band_any = any(consensus_mask_by_band(g1:g2, :), 1);
+        has_theta = band_any(theta_idx);
+        has_gamma = band_any(gamma_idx);
+        has_ripple = band_any(ripple_idx);
+        code = assign_state_code_from_presence(has_theta, has_gamma, has_ripple);
         if code == 0
             continue;
         end
 
-        g1 = idx1 + run_start_local(i) - 1;
-        g2 = idx1 + run_end_local(i) - 1;
-
-        band_any = any(consensus_mask_by_band(g1:g2, :), 1);
-        band_all = all(consensus_mask_by_band(g1:g2, :), 1);
         support_seg = double(channel_support_count_by_band(g1:g2, :));
-
         region_support_max = zeros(n_regions, n_bands);
         region_support_mean = zeros(n_regions, n_bands);
         for r = 1:n_regions
@@ -554,22 +637,122 @@ for k = 1:n_sessions
         state_windows(idx_out).state_code = code;
         state_windows(idx_out).state_label = state_catalog(double(code)).label;
         state_windows(idx_out).win_global = [g1, g2];
-        state_windows(idx_out).win_session_local = [run_start_local(i), run_end_local(i)];
+        state_windows(idx_out).win_session_local = [ ...
+            g1 - session_start_idx(k) + 1, ...
+            g2 - session_start_idx(k) + 1];
         state_windows(idx_out).session_idx = k;
         state_windows(idx_out).session_id = session_ids(k);
         state_windows(idx_out).duration_samples = g2 - g1 + 1;
         state_windows(idx_out).duration_sec = (g2 - g1 + 1) * double(session_dx(k));
         state_windows(idx_out).consensus_band_any = band_any;
-        state_windows(idx_out).consensus_band_all = band_all;
+        state_windows(idx_out).consensus_band_all = all(consensus_mask_by_band(g1:g2, :), 1);
         state_windows(idx_out).consensus_band_labels_any = labels_from_mask(band_any, band_labels);
-        state_windows(idx_out).consensus_band_labels_all = labels_from_mask(band_all, band_labels);
+        state_windows(idx_out).consensus_band_labels_all = labels_from_mask(state_windows(idx_out).consensus_band_all, band_labels);
         state_windows(idx_out).channel_support_max_by_band = max(support_seg, [], 1);
         state_windows(idx_out).channel_support_mean_by_band = mean(support_seg, 1);
         state_windows(idx_out).region_labels = regions(:);
         state_windows(idx_out).region_support_max_by_band = region_support_max;
         state_windows(idx_out).region_support_mean_by_band = region_support_mean;
         state_windows(idx_out).region_support_max_any_band = max(region_support_max, [], 2);
+        state_windows(idx_out).constituent_event_count_by_band = merged_windows(i).event_count_by_band;
+        state_windows(idx_out).constituent_event_total_count = sum(merged_windows(i).event_count_by_band);
+
+        state_code_by_time(g1:g2) = code;
     end
+end
+end
+
+
+function session_event_rows = collect_session_role_events(band_consensus, role_band_indices, session_idx)
+session_event_rows = zeros(0, 3);
+
+for i = 1:numel(role_band_indices)
+    band_idx = double(role_band_indices(i));
+    band_info = band_consensus(band_idx);
+    if isempty(band_info.event_win)
+        continue;
+    end
+
+    keep_mask = double(band_info.event_session_idx(:)) == double(session_idx);
+    event_win = double(band_info.event_win(keep_mask, :));
+    if isempty(event_win)
+        continue;
+    end
+
+    n_new = size(event_win, 1);
+    session_event_rows = [session_event_rows; [event_win, repmat(band_idx, n_new, 1)]]; %#ok<AGROW>
+end
+end
+
+
+function merged_windows = merge_session_event_rows(session_event_rows, merge_gap_samples, n_bands)
+if isempty(session_event_rows)
+    merged_windows = struct('start_idx', {}, 'end_idx', {}, 'event_count_by_band', {});
+    return;
+end
+
+rows_sorted = sortrows(session_event_rows, [1, 2, 3]);
+merged_windows = struct('start_idx', {}, 'end_idx', {}, 'event_count_by_band', {});
+
+current_start = rows_sorted(1, 1);
+current_end = rows_sorted(1, 2);
+current_counts = zeros(1, n_bands);
+current_counts(rows_sorted(1, 3)) = current_counts(rows_sorted(1, 3)) + 1;
+idx_out = 0;
+
+for i = 2:size(rows_sorted, 1)
+    g1 = rows_sorted(i, 1);
+    g2 = rows_sorted(i, 2);
+    b = rows_sorted(i, 3);
+
+    if g1 <= current_end + merge_gap_samples
+        current_end = max(current_end, g2);
+        current_counts(b) = current_counts(b) + 1;
+    else
+        idx_out = idx_out + 1;
+        merged_windows(idx_out).start_idx = current_start;
+        merged_windows(idx_out).end_idx = current_end;
+        merged_windows(idx_out).event_count_by_band = current_counts;
+
+        current_start = g1;
+        current_end = g2;
+        current_counts = zeros(1, n_bands);
+        current_counts(b) = 1;
+    end
+end
+
+idx_out = idx_out + 1;
+merged_windows(idx_out).start_idx = current_start;
+merged_windows(idx_out).end_idx = current_end;
+merged_windows(idx_out).event_count_by_band = current_counts;
+end
+
+
+function code = assign_state_code_from_presence(has_theta, has_gamma, has_ripple)
+code = uint8(0);
+
+if has_theta && has_ripple
+    code = uint8(5);
+    return;
+end
+
+if has_theta && has_gamma
+    code = uint8(4);
+    return;
+end
+
+if has_theta
+    code = uint8(1);
+    return;
+end
+
+if has_gamma && ~has_ripple
+    code = uint8(2);
+    return;
+end
+
+if has_ripple
+    code = uint8(3);
 end
 end
 
@@ -693,6 +876,12 @@ end
 function token = normalize_token(label)
 token = lower(strtrim(char(string(label))));
 token = regexprep(token, '[^a-z0-9]+', '');
+end
+
+
+function labels = normalize_region_list(labels_in)
+labels = cellfun(@normalize_token, cellstr(string(labels_in(:))), 'UniformOutput', false);
+labels = labels(:);
 end
 
 

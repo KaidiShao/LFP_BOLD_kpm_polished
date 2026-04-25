@@ -22,7 +22,7 @@ function dict = build_reskoopnet_dicts(D, cfg, output_root, params)
 %  Defaults
 %  =========================
 if nargin < 3 || isempty(output_root)
-    output_root = 'D:\DataPons_processed\';
+    output_root = get_project_processed_root();
 end
 
 if nargin < 4
@@ -90,7 +90,11 @@ end
 %  =========================
 obs_info = build_observable_info(D, cfg, regions, freqs, low_idx, high_groups, params.spec_mode);
 n_obs = height(obs_info);
-n_time = size(D.data, 1);
+if isfield(D, 'n_time') && ~isempty(D.n_time)
+    n_time = D.n_time;
+else
+    n_time = size(D.data, 1);
+end
 
 fprintf('Total time points   : %d\n', n_time);
 fprintf('Total observables   : %d\n', n_obs);
@@ -182,6 +186,15 @@ end
 session_ids = D.session_ids;
 session_lengths = D.session_lengths;
 session_dx = D.session_dx;
+dx = resolve_uniform_dx(session_dx);
+dt = dx;
+fs = [];
+if ~isempty(dx)
+    fs = 1 / dx;
+end
+sampling_period = dx;
+sample_period = dx;
+sampling_frequency = fs;
 session_start_idx = D.session_start_idx;
 session_end_idx = D.session_end_idx;
 border_idx = D.border_idx;
@@ -190,6 +203,7 @@ channel_sites = cfg.channels.sites(D.selected_channels);
 
 save(save_file, ...
     'obs_info', 'params', 'freqs', 'regions', ...
+    'dx', 'dt', 'fs', 'sampling_period', 'sample_period', 'sampling_frequency', ...
     'session_ids', 'session_lengths', 'session_dx', ...
     'session_start_idx', 'session_end_idx', 'border_idx', ...
     'selected_channels', 'channel_sites', ...
@@ -205,14 +219,41 @@ dict.save_file = save_file;
 dict.info_csv_file = info_csv_file;
 dict.n_time = n_time;
 dict.n_obs = n_obs;
+dict.dx = dx;
+dict.dt = dt;
+dict.fs = fs;
 dict.obs_info = obs_info;
+end
+
+function dx = resolve_uniform_dx(session_dx)
+% Return a scalar sampling interval only when all sessions agree.
+
+dx = [];
+if isempty(session_dx)
+    return;
+end
+
+session_dx = double(session_dx(:));
+session_dx = session_dx(isfinite(session_dx) & session_dx > 0);
+if isempty(session_dx)
+    return;
+end
+
+dx0 = median(session_dx);
+tol = max(1e-12, 1e-5 * abs(dx0));
+if all(abs(session_dx - dx0) <= tol)
+    dx = dx0;
+else
+    warning(['Session sampling periods are inconsistent; saving session_dx ', ...
+        'without scalar dx/dt. Downstream code must handle sessions explicitly.']);
+end
 end
 
 function obs_chunk = build_observable_chunk(D, Mspec, spec_var_name, idx, ...
     low_idx, high_groups, regions, params)
 % Build one time chunk of observables.
 
-raw_chunk = double(D.data(idx, :));   % time x n_channels
+raw_chunk = double(read_blp_data_slice(D, idx));   % time x n_channels
 n_time_chunk = size(raw_chunk, 1);
 n_blp = size(raw_chunk, 2);
 n_regions = numel(regions);

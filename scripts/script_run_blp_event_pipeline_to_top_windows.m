@@ -16,7 +16,7 @@ close all force;
 %  Dataset selection
 %  -------------------------
 cfg = cfg_E10gb1();   % Replace with your target cfg_*.m
-output_root = 'E:\DataPons_processed\';
+output_root = get_project_processed_root();
 
 fprintf('Running BLP event pipeline for %s\n', cfg.dataset_id);
 fprintf('Raw data root:\n  %s\n', cfg.raw_data_root);
@@ -37,6 +37,7 @@ event_params.band_labels = {'theta', 'gamma', 'ripple'};
 event_params.L_start_range = [151, 101, 51];
 event_params.L_extract_range = [301, 201, 101];
 event_params.ThresRatio_range = [3.5, 4, 4];
+event_params.input_normalization = 'zscore_per_channel';
 event_params.force_recompute = false;
 
 R = compute_blp_bandpass_events(D, cfg, output_root, event_params);
@@ -100,7 +101,8 @@ end
 %  Step 6. Top event-diversity windows
 %  -------------------------
 window_params = struct();
-window_params.window_length_samples = 5000;
+window_params.window_length_samples = 6000;
+window_params.window_mode = 'global';
 window_params.keep_partial_window = false;
 window_params.top_k = 10;
 window_params.save_csv = true;

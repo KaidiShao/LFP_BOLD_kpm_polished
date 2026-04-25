@@ -2,7 +2,7 @@ function [R, source_event_file] = load_event_results(cfg, output_root, event_inp
 % Load saved event-detection results from a struct or file.
 
 if nargin < 2 || isempty(output_root)
-    output_root = 'D:\DataPons_processed\';
+    output_root = get_project_processed_root();
 end
 
 if nargin < 3

@@ -1,4 +1,9 @@
 results/
+analysis_outputs/
+scripts/analysis_outputs/
+tests/test24_detection_alignment_checks/outputs_*/
+tests/tmp_event_compare_*/
+*_pre_reskoopnet_qc_summary*.png
 __pycache__/
 *.pyc
 *.pyo

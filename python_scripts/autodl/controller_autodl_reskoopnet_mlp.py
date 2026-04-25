@@ -4,13 +4,8 @@ import os
 import posixpath
 import shlex
 import subprocess
-import sys
 import time
 from pathlib import Path
-
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-AUTODL_DIR = Path(__file__).resolve().parent
 
 
 def resolve_local_results_root():
@@ -41,8 +36,8 @@ def default_local_download_root(dataset_stem, model_family):
 def parse_args():
     parser = argparse.ArgumentParser(
         description=(
-            "Upload AutoDL MLP pipeline code and input data, launch a remote run, "
-            "poll logs, and download the resulting artifacts."
+            "Upload one observable package to AutoDL, launch a remote run with pre-uploaded code, "
+            "poll logs, download artifacts, and optionally delete remote run outputs after local verification."
         )
     )
     parser.add_argument("--ssh-host", required=True)
@@ -65,6 +60,11 @@ def parse_args():
         default="python",
         help="Remote Python executable used to launch the training script.",
     )
+    parser.add_argument(
+        "--remote-script-name",
+        default="run_autodl_reskoopnet_mlp.py",
+        help="Remote training entry script name expected under remote-code-dir.",
+    )
 
     parser.add_argument("--local-data-file", required=True)
     parser.add_argument("--local-obs-info-file", default=None)
@@ -85,9 +85,24 @@ def parse_args():
         choices=["projected_kv", "projected_vlambda"],
     )
     parser.add_argument(
+        "--loss-mode",
+        default="squared",
+        choices=["squared", "per_dim", "relative_target"],
+        help="Legacy compatibility flag; optimization now always uses squared residual loss.",
+    )
+    parser.add_argument(
+        "--loss-epsilon",
+        type=float,
+        default=1e-12,
+        help="Epsilon used only for relative_target diagnostic metrics.",
+    )
+    parser.add_argument(
         "--observable-mode",
         default="abs",
-        choices=["abs", "complex", "complex_split"],
+        choices=[
+            "abs", "complex", "complex_split", "eleHP", "HP", "identity",
+            "roi_mean", "slow_band_power", "svd", "HP_svd100", "global_svd100",
+        ],
     )
     parser.add_argument("--file-type", default=".h5", choices=[".h5", ".mat"])
     parser.add_argument("--field-name", default="obs")
@@ -106,26 +121,72 @@ def parse_args():
     parser.add_argument("--chunk-size", type=int, default=5000)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--fresh-checkpoints", action="store_true")
-    parser.add_argument("--skip-psi-export", action="store_true")
+    parser.set_defaults(export_psi=False)
+    parser.add_argument(
+        "--export-psi",
+        dest="export_psi",
+        action="store_true",
+        help="Opt in to Psi_X/Psi_Y export. Disabled by default to reduce remote storage usage.",
+    )
+    parser.add_argument(
+        "--skip-psi-export",
+        dest="export_psi",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
 
     parser.add_argument("--local-download-root", default=None)
     parser.add_argument("--download-checkpoints", action="store_true")
-    parser.add_argument("--skip-code-sync", action="store_true")
     parser.add_argument("--skip-data-upload", action="store_true")
-    parser.add_argument("--delete-remote-after-download", action="store_true")
-    parser.add_argument("--poll-interval", type=int, default=30)
-    parser.add_argument("--tail-lines", type=int, default=20)
+    parser.add_argument(
+        "--recover-completed-remote-run",
+        action="store_true",
+        help=(
+            "If the expected remote exit file already exists, skip launching and proceed directly "
+            "to log/output download and optional cleanup. Useful after a local controller disconnect."
+        ),
+    )
+    parser.add_argument(
+        "--delete-remote-run-after-download",
+        dest="delete_remote_run_after_download",
+        action="store_true",
+        help="Delete the remote output/checkpoint/log directories for this run after local download verification succeeds.",
+    )
+    parser.add_argument(
+        "--delete-remote-after-download",
+        dest="delete_remote_run_after_download",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("--poll-interval", type=int, default=15)
+    parser.add_argument("--tail-lines", type=int, default=80)
+    parser.add_argument(
+        "--launch-timeout-sec",
+        type=int,
+        default=30,
+        help="If the initial remote launch ssh call does not return within this many seconds, continue by polling remote status instead of hanging locally.",
+    )
     return parser.parse_args()
+
+
 def resolve_observable_tag(observable_mode):
     observable_mode_map = {
         "abs": "abs",
         "complex": "complex_split",
         "complex_split": "complex_split",
+        "eleHP": "eleHP",
+        "HP": "HP",
+        "identity": "identity",
+        "roi_mean": "roi_mean",
+        "slow_band_power": "slow_band_power",
+        "svd": "svd",
+        "HP_svd100": "HP_svd100",
+        "global_svd100": "global_svd100",
     }
     return observable_mode_map[observable_mode]
 
 
-def build_run_label(run_name_base, experiment_name, residual_form, observable_mode):
+def build_run_label(run_name_base, experiment_name, residual_form, observable_mode, loss_mode="squared"):
     observable_tag = resolve_observable_tag(observable_mode)
     residual_form_tag = sanitize_tag(residual_form)
     effective_experiment_name = f"{experiment_name}_{residual_form_tag}"
@@ -152,19 +213,73 @@ def build_scp_base(args):
     return cmd
 
 
-def run_command(cmd, check=True, capture_output=False, text=True):
-    result = subprocess.run(
-        cmd,
-        check=check,
-        capture_output=capture_output,
-        text=text,
-    )
+def run_command(cmd, check=True, capture_output=False, text=True, timeout_sec=None):
+    kwargs = {
+        "check": check,
+        "capture_output": capture_output,
+        "text": text,
+        "timeout": timeout_sec,
+    }
+    if text:
+        kwargs.update({"encoding": "utf-8", "errors": "replace"})
+    result = subprocess.run(cmd, **kwargs)
     return result
 
 
-def run_ssh(args, remote_command, capture_output=False):
+def run_ssh(args, remote_command, capture_output=False, timeout_sec=None):
     cmd = build_ssh_base(args) + [remote_command]
-    return run_command(cmd, check=True, capture_output=capture_output, text=True)
+    return run_command(
+        cmd,
+        check=True,
+        capture_output=capture_output,
+        text=True,
+        timeout_sec=timeout_sec,
+    )
+
+
+def read_remote_exit_status(args, remote_exit_file):
+    status_probe = (
+        f"if [ -f {quote_remote(remote_exit_file)} ]; then "
+        f"cat {quote_remote(remote_exit_file)}; "
+        f"else "
+        f"echo MISSING; "
+        f"fi"
+    )
+    result = run_ssh(args, status_probe, capture_output=True)
+    status_text = result.stdout.strip()
+    if not status_text or status_text == "MISSING":
+        return None
+    try:
+        return int(status_text.splitlines()[-1])
+    except ValueError:
+        return None
+
+
+def read_remote_run_status(args, remote_pid_file, remote_exit_file, remote_log_file):
+    status_command = (
+        f"if [ -f {quote_remote(remote_pid_file)} ]; then "
+        f"PID=$(cat {quote_remote(remote_pid_file)}); "
+        f"if kill -0 \"$PID\" 2>/dev/null; then "
+        f"echo RUNNING:$PID; "
+        f"else "
+        f"if [ -f {quote_remote(remote_exit_file)} ]; then "
+        f"echo EXITED:$(cat {quote_remote(remote_exit_file)}); "
+        f"else "
+        f"echo STOPPED_NO_EXIT; "
+        f"fi; "
+        f"fi; "
+        f"else "
+        f"if [ -f {quote_remote(remote_exit_file)} ]; then "
+        f"echo EXITED:$(cat {quote_remote(remote_exit_file)}); "
+        f"elif [ -s {quote_remote(remote_log_file)} ]; then "
+        f"echo RUNNING_NO_PID; "
+        f"else "
+        f"echo PID_MISSING; "
+        f"fi; "
+        f"fi"
+    )
+    status_result = run_ssh(args, status_command, capture_output=True)
+    return status_result.stdout.strip()
 
 
 def scp_upload(args, local_path, remote_path):
@@ -187,9 +302,15 @@ def ensure_remote_dirs(args, *remote_dirs):
     run_ssh(args, f"mkdir -p {mkdir_targets}")
 
 
+def ensure_remote_files_exist(args, *remote_files):
+    checks = " && ".join(f"test -f {quote_remote(path_value)}" for path_value in remote_files)
+    run_ssh(args, checks)
+
+
 def build_remote_python_command(args, remote_script_path, remote_data_filename, remote_data_subdir):
     parts = [
         args.remote_python,
+        "-u",
         remote_script_path,
         "--project-root",
         args.remote_code_dir,
@@ -213,8 +334,14 @@ def build_remote_python_command(args, remote_script_path, remote_data_filename, 
         args.solver_name,
         "--residual-form",
         args.residual_form,
+        "--loss-mode",
+        args.loss_mode,
+        "--loss-epsilon",
+        str(args.loss_epsilon),
         "--data-subdir",
         remote_data_subdir,
+        "--dataset-stem",
+        args.dataset_stem,
         "--observable-mode",
         args.observable_mode,
         "--data-filename",
@@ -259,8 +386,8 @@ def build_remote_python_command(args, remote_script_path, remote_data_filename, 
         parts.append("--resume")
     if args.fresh_checkpoints:
         parts.append("--fresh-checkpoints")
-    if args.skip_psi_export:
-        parts.append("--skip-psi-export")
+    if args.export_psi:
+        parts.append("--export-psi")
 
     return " ".join(shlex.quote(part) for part in parts)
 
@@ -268,6 +395,58 @@ def build_remote_python_command(args, remote_script_path, remote_data_filename, 
 def write_local_controller_manifest(local_manifest_path, payload):
     local_manifest_path.parent.mkdir(parents=True, exist_ok=True)
     local_manifest_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def verify_downloaded_outputs(local_output_dir, require_psi=False):
+    if not local_output_dir.exists():
+        return {
+            "ok": False,
+            "reason": f"Downloaded output directory missing: {local_output_dir}",
+            "summary_count": 0,
+            "output_chunk_count": 0,
+            "psi_chunk_count": 0,
+        }
+
+    summary_files = sorted(local_output_dir.glob("*_summary.mat"))
+    output_chunks = sorted(
+        path for path in local_output_dir.glob("*_outputs_*.mat") if "_outputs_Psi_" not in path.name
+    )
+    psi_chunks = sorted(local_output_dir.glob("*_outputs_Psi_*.mat"))
+
+    if not summary_files:
+        return {
+            "ok": False,
+            "reason": "No summary.mat file was downloaded.",
+            "summary_count": 0,
+            "output_chunk_count": len(output_chunks),
+            "psi_chunk_count": len(psi_chunks),
+        }
+
+    if not output_chunks:
+        return {
+            "ok": False,
+            "reason": "No output chunk files were downloaded.",
+            "summary_count": len(summary_files),
+            "output_chunk_count": 0,
+            "psi_chunk_count": len(psi_chunks),
+        }
+
+    if require_psi and not psi_chunks:
+        return {
+            "ok": False,
+            "reason": "Psi export was requested, but no Psi chunks were downloaded.",
+            "summary_count": len(summary_files),
+            "output_chunk_count": len(output_chunks),
+            "psi_chunk_count": len(psi_chunks),
+        }
+
+    return {
+        "ok": True,
+        "reason": "Downloaded outputs passed minimal verification.",
+        "summary_count": len(summary_files),
+        "output_chunk_count": len(output_chunks),
+        "psi_chunk_count": len(psi_chunks),
+    }
 
 
 def main():
@@ -295,6 +474,7 @@ def main():
         args.experiment_name,
         args.residual_form,
         args.observable_mode,
+        args.loss_mode,
     )
     remote_output_dir = posixpath.join(args.remote_output_parent, run_label)
     remote_checkpoint_dir = posixpath.join(args.remote_checkpoint_parent, run_label)
@@ -303,7 +483,7 @@ def main():
     remote_pid_file = posixpath.join(remote_log_dir, "controller_run.pid")
     remote_exit_file = posixpath.join(remote_log_dir, "controller_run.exit")
 
-    remote_script_path = posixpath.join(args.remote_code_dir, "run_autodl_reskoopnet_mlp.py")
+    remote_script_path = posixpath.join(args.remote_code_dir, args.remote_script_name)
 
     local_download_root = Path(args.local_download_root).resolve()
     local_outputs_parent = local_download_root / "outputs"
@@ -316,6 +496,9 @@ def main():
         "dataset_stem": dataset_stem,
         "effective_experiment_name": effective_experiment_name,
         "observable_tag": observable_tag,
+        "loss_mode": "squared",
+        "requested_loss_mode": args.loss_mode,
+        "loss_epsilon": args.loss_epsilon,
         "remote_code_dir": args.remote_code_dir,
         "remote_data_dir": remote_data_dir,
         "remote_output_dir": remote_output_dir,
@@ -324,6 +507,9 @@ def main():
         "remote_log_file": remote_log_file,
         "local_data_file": str(local_data_file),
         "local_obs_info_file": str(local_obs_info_file) if local_obs_info_file else None,
+        "export_psi": args.export_psi,
+        "delete_remote_run_after_download": args.delete_remote_run_after_download,
+        "remote_input_delete_planned": False,
     }
     write_local_controller_manifest(local_manifest_path, manifest)
 
@@ -344,18 +530,8 @@ def main():
         remote_checkpoint_dir,
     )
 
-    if not args.skip_code_sync:
-        print("Uploading AutoDL code...")
-        code_files = [
-            AUTODL_DIR / "edmd_utils.py",
-            AUTODL_DIR / "solver_resdmd_batch2.py",
-            AUTODL_DIR / "solver_resdmd_batch3.py",
-            AUTODL_DIR / "run_autodl_reskoopnet_mlp.py",
-        ]
-        for code_file in code_files:
-            scp_upload(args, code_file, posixpath.join(args.remote_code_dir, code_file.name))
-    else:
-        print("Skipping code sync.")
+    print("Checking remote code entrypoint...")
+    ensure_remote_files_exist(args, remote_script_path)
 
     if not args.skip_data_upload:
         print("Uploading data package...")
@@ -385,78 +561,115 @@ def main():
         f"echo $status > {quote_remote(remote_exit_file)}; "
         f"exit $status"
     )
-    launch_command = (
-        f"mkdir -p {quote_remote(remote_log_dir)} && "
-        f"rm -f {quote_remote(remote_pid_file)} {quote_remote(remote_exit_file)} && "
-        f"nohup bash -lc {quote_remote(remote_body)} "
-        f"> {quote_remote(remote_log_file)} 2>&1 < /dev/null & "
-        f"echo $! > {quote_remote(remote_pid_file)} && "
-        f"echo STARTED"
-    )
-
-    print("Launching remote run...")
-    launch_result = run_ssh(args, launch_command, capture_output=True)
-    launch_stdout = launch_result.stdout.strip()
-    if launch_stdout:
-        print(launch_stdout)
-
-    print("Polling remote run...")
-    previous_tail = None
     exit_status = None
-    while True:
-        status_command = (
-            f"if [ -f {quote_remote(remote_pid_file)} ]; then "
-            f"PID=$(cat {quote_remote(remote_pid_file)}); "
-            f"if kill -0 \"$PID\" 2>/dev/null; then "
-            f"echo RUNNING:$PID; "
-            f"else "
-            f"if [ -f {quote_remote(remote_exit_file)} ]; then "
-            f"echo EXITED:$(cat {quote_remote(remote_exit_file)}); "
-            f"else "
-            f"echo STOPPED_NO_EXIT; "
-            f"fi; "
-            f"fi; "
-            f"else "
-            f"if [ -f {quote_remote(remote_exit_file)} ]; then "
-            f"echo EXITED:$(cat {quote_remote(remote_exit_file)}); "
-            f"else "
-            f"echo PID_MISSING; "
-            f"fi; "
-            f"fi"
-        )
-        status_result = run_ssh(args, status_command, capture_output=True)
-        status_text = status_result.stdout.strip()
+    attach_existing_run = False
+    if args.recover_completed_remote_run:
+        exit_status = read_remote_exit_status(args, remote_exit_file)
+        if exit_status is not None:
+            print(
+                "Recovered completed remote run from existing exit file: "
+                f"{remote_exit_file} (exit status {exit_status})."
+            )
+        else:
+            status_text = read_remote_run_status(args, remote_pid_file, remote_exit_file, remote_log_file)
+            if status_text.startswith("RUNNING:") or status_text == "RUNNING_NO_PID":
+                attach_existing_run = True
+                print(f"Attaching to existing remote run: {status_text}")
 
-        tail_command = f"tail -n {int(args.tail_lines)} {quote_remote(remote_log_file)} 2>/dev/null || true"
-        tail_result = run_ssh(args, tail_command, capture_output=True)
-        tail_text = tail_result.stdout.strip()
-        if tail_text and tail_text != previous_tail:
-            print("\n--- remote log tail ---")
-            print(tail_text)
-            print("--- end remote log tail ---\n")
-            previous_tail = tail_text
+    if exit_status is None:
+        if not attach_existing_run:
+            launch_command = (
+                f"mkdir -p {quote_remote(remote_log_dir)} && "
+                f"rm -f {quote_remote(remote_pid_file)} {quote_remote(remote_exit_file)} && "
+                f"if command -v setsid >/dev/null 2>&1; then "
+                f"setsid bash -lc {quote_remote(remote_body)} "
+                f"> {quote_remote(remote_log_file)} 2>&1 < /dev/null & "
+                f"else "
+                f"nohup bash -lc {quote_remote(remote_body)} "
+                f"> {quote_remote(remote_log_file)} 2>&1 < /dev/null & "
+                f"fi; "
+                f"echo $! > {quote_remote(remote_pid_file)}; "
+                f"echo STARTED"
+            )
 
-        if status_text.startswith("EXITED:"):
-            exit_status = int(status_text.split(":", 1)[1])
-            print(f"Remote run finished with exit status {exit_status}.")
-            break
+            print("Launching remote run...")
+            try:
+                launch_result = run_ssh(
+                    args,
+                    launch_command,
+                    capture_output=True,
+                    timeout_sec=args.launch_timeout_sec,
+                )
+                launch_stdout = launch_result.stdout.strip()
+                if launch_stdout:
+                    print(launch_stdout)
+            except subprocess.TimeoutExpired:
+                print(
+                    "Launch ssh call did not return within "
+                    f"{args.launch_timeout_sec}s. Proceeding with remote status polling."
+                )
+        else:
+            print("Skipping launch because an existing remote run is still active.")
 
-        print(f"Remote status: {status_text}. Waiting {args.poll_interval}s...")
-        time.sleep(args.poll_interval)
+        print("Polling remote run...")
+        previous_tail = None
+        while True:
+            status_text = read_remote_run_status(args, remote_pid_file, remote_exit_file, remote_log_file)
+
+            tail_command = f"tail -n {int(args.tail_lines)} {quote_remote(remote_log_file)} 2>/dev/null || true"
+            tail_result = run_ssh(args, tail_command, capture_output=True)
+            tail_text = tail_result.stdout.strip()
+            if tail_text and tail_text != previous_tail:
+                print("\n--- remote log tail ---")
+                print(tail_text)
+                print("--- end remote log tail ---\n")
+                previous_tail = tail_text
+
+            if status_text.startswith("EXITED:"):
+                exit_status = int(status_text.split(":", 1)[1])
+                print(f"Remote run finished with exit status {exit_status}.")
+                break
+
+            print(f"Remote status: {status_text}. Waiting {args.poll_interval}s...")
+            time.sleep(args.poll_interval)
 
     print("Downloading remote logs...")
     scp_download_dir(args, remote_log_dir, local_logs_parent)
 
+    verification_result = {
+        "ok": False,
+        "reason": "Output verification was not run.",
+        "summary_count": 0,
+        "output_chunk_count": 0,
+        "psi_chunk_count": 0,
+    }
+
     if exit_status == 0:
         print("Downloading remote outputs...")
         scp_download_dir(args, remote_output_dir, local_outputs_parent)
+        local_output_dir = local_outputs_parent / run_label
+        verification_result = verify_downloaded_outputs(
+            local_output_dir,
+            require_psi=args.export_psi,
+        )
+        print(
+            "Local output verification: "
+            f"{verification_result['reason']} "
+            f"(summary={verification_result['summary_count']}, "
+            f"outputs={verification_result['output_chunk_count']}, "
+            f"psi={verification_result['psi_chunk_count']})"
+        )
         if args.download_checkpoints:
             print("Downloading remote checkpoints...")
             scp_download_dir(args, remote_checkpoint_dir, local_checkpoints_parent)
     else:
         print("Skipping output download because the remote run did not exit cleanly.")
 
-    if args.delete_remote_after_download and exit_status == 0:
+    manifest["exit_status"] = exit_status
+    manifest["verification"] = verification_result
+    write_local_controller_manifest(local_manifest_path, manifest)
+
+    if args.delete_remote_run_after_download and exit_status == 0 and verification_result["ok"]:
         print("Deleting remote run artifacts...")
         delete_command = (
             f"rm -rf "
@@ -465,9 +678,14 @@ def main():
             f"{quote_remote(remote_log_dir)}"
         )
         run_ssh(args, delete_command)
+    elif args.delete_remote_run_after_download and exit_status == 0:
+        print("Skipping remote run artifact deletion because local verification failed.")
 
     if exit_status != 0:
         raise SystemExit(exit_status)
+
+    if not verification_result["ok"]:
+        raise SystemExit(2)
 
     print("Controller finished successfully.")
 

@@ -15,7 +15,7 @@ function S = summarize_blp_consensus_state_types(cfg, output_root, C, params, so
 %  Input defaults
 %  =========================
 if nargin < 2 || isempty(output_root)
-    output_root = 'D:\DataPons_processed\';
+    output_root = get_project_processed_root();
 end
 
 if nargin < 3
@@ -166,6 +166,11 @@ csv_file = fullfile(save_dir, [save_tag, '.csv']);
 if exist(save_file, 'file') == 2 && ~params.force_recompute
     L = load(save_file);
     S = L.S;
+    S.save_file = save_file;
+    S.csv_file = csv_file;
+    if params.save_csv && exist(csv_file, 'file') ~= 2 && isfield(S, 'summary_table')
+        writetable(S.summary_table, csv_file);
+    end
     return;
 end
 

@@ -13,7 +13,7 @@ cfg.plot.between_gap = 2.2;
 cfg.plot.trace_linewidth = 0.4;
 
 % Plot settings
-output_root = 'D:\DataPons_processed\';
+output_root = get_project_processed_root();
 time_range_sec = [300, 320];
 spec_colormap = flipud(othercolor('Spectral10'));
 freq_range_to_plot = [0, 250];

@@ -15,10 +15,14 @@ function [EDMD_outputs, concat_info] = load_and_concat_edmd_output_chunks(data_d
 %            .concat_fields          (default {'efuns'})
 %            .concat_dim             (default 1)
 %            .required_equal_fields  (default {'evalues','kpm_modes',...
-%                                        'N_dict','residual_form'})
+%                                        'N_dict','residual_form',...
+%                                        'observable_tag','observable_mode'})
 %            .allow_missing_chunks   (default false)
+%            .scan_mode              (default 'full'; optional
+%                                      'uniform_except_last')
 %            .verbose                (default true)
 %            .progress_every         (default 50)
+%            .progress_timing        (default true; print elapsed/ETA)
 %
 % Outputs
 %   EDMD_outputs Concatenated output struct
@@ -75,25 +79,74 @@ end
 
 chunk_lengths(1) = validate_chunk_lengths(concat_lengths_by_field(1, :), files(1).name);
 
-for k = 2:n_chunks
-    if should_print_progress(k, n_chunks, params.progress_every) && params.verbose
-        fprintf('[scan %d/%d] %s\n', k, n_chunks, files(k).name);
-    end
+last_data = [];
+needs_load_validation = false;
+scan_stage_tic = tic;
+switch params.scan_mode
+    case 'full'
+        for k = 2:n_chunks
+            if should_print_progress(k, n_chunks, params.progress_every) && params.verbose
+                fprintf('[scan %d/%d] %s%s\n', k, n_chunks, files(k).name, ...
+                    progress_timing_suffix(k, n_chunks, scan_stage_tic, params.progress_timing));
+            end
 
-    current_data = load_variable(files(k).fullpath, params.variable_name);
-    current_outputs = current_data.(params.variable_name);
+            current_data = load_variable(files(k).fullpath, params.variable_name);
+            current_outputs = current_data.(params.variable_name);
 
-    check_equal_fields(EDMD_outputs, current_outputs, equal_fields, files(k).name);
+            check_equal_fields(EDMD_outputs, current_outputs, equal_fields, files(k).name);
 
-    for i = 1:n_concat_fields
-        field_name = concat_fields{i};
-        current_value = read_required_field(current_outputs, field_name, files(k).name);
-        validate_concat_value(current_value, field_name);
-        validate_concat_shape(ref_sizes{i}, size(current_value), params.concat_dim, field_name, files(k).name);
-        concat_lengths_by_field(k, i) = get_concat_length(current_value, params.concat_dim);
-    end
+            for i = 1:n_concat_fields
+                field_name = concat_fields{i};
+                current_value = read_required_field(current_outputs, field_name, files(k).name);
+                validate_concat_value(current_value, field_name);
+                validate_concat_shape(ref_sizes{i}, size(current_value), params.concat_dim, field_name, files(k).name);
+                concat_lengths_by_field(k, i) = get_concat_length(current_value, params.concat_dim);
+            end
 
-    chunk_lengths(k) = validate_chunk_lengths(concat_lengths_by_field(k, :), files(k).name);
+            chunk_lengths(k) = validate_chunk_lengths(concat_lengths_by_field(k, :), files(k).name);
+        end
+
+    case 'uniform_except_last'
+        if params.allow_missing_chunks
+            error('params.scan_mode = ''uniform_except_last'' requires allow_missing_chunks = false.');
+        end
+
+        needs_load_validation = true;
+        if params.verbose
+            fprintf('Fast scan mode: assuming chunks 1:%d share the first chunk length; validating during load.\n', ...
+                max(n_chunks - 1, 1));
+        end
+
+        if n_chunks > 2
+            concat_lengths_by_field(2:n_chunks-1, :) = repmat( ...
+                concat_lengths_by_field(1, :), n_chunks - 2, 1);
+            chunk_lengths(2:n_chunks-1) = chunk_lengths(1);
+        end
+
+        if n_chunks > 1
+            k = n_chunks;
+            if params.verbose
+                fprintf('[scan-last %d/%d] %s%s\n', k, n_chunks, files(k).name, ...
+                    progress_timing_suffix(k, n_chunks, scan_stage_tic, params.progress_timing));
+            end
+
+            last_data = load_variable(files(k).fullpath, params.variable_name);
+            current_outputs = last_data.(params.variable_name);
+            check_equal_fields(EDMD_outputs, current_outputs, equal_fields, files(k).name);
+
+            for i = 1:n_concat_fields
+                field_name = concat_fields{i};
+                current_value = read_required_field(current_outputs, field_name, files(k).name);
+                validate_concat_value(current_value, field_name);
+                validate_concat_shape(ref_sizes{i}, size(current_value), params.concat_dim, field_name, files(k).name);
+                concat_lengths_by_field(k, i) = get_concat_length(current_value, params.concat_dim);
+            end
+
+            chunk_lengths(k) = validate_chunk_lengths(concat_lengths_by_field(k, :), files(k).name);
+        end
+
+    otherwise
+        error('Unknown params.scan_mode = %s.', params.scan_mode);
 end
 
 total_length = sum(chunk_lengths);
@@ -115,32 +168,68 @@ end
 chunk_start_idx = zeros(n_chunks, 1);
 chunk_end_idx = zeros(n_chunks, 1);
 cursor = 1;
+load_stage_tic = tic;
 
 for k = 1:n_chunks
-    if should_print_progress(k, n_chunks, params.progress_every) && params.verbose
-        fprintf('[load %d/%d] %s\n', k, n_chunks, files(k).name);
-    end
+    chunk_tic = tic;
 
+    chunk_load_tic = tic;
     if k == 1
         current_outputs = first_data.(params.variable_name);
+    elseif k == n_chunks && ~isempty(last_data)
+        current_outputs = last_data.(params.variable_name);
     else
         current_data = load_variable(files(k).fullpath, params.variable_name);
         current_outputs = current_data.(params.variable_name);
     end
+    load_sec = toc(chunk_load_tic);
+
+    validate_tic = tic;
+    if needs_load_validation && k > 1
+        check_equal_fields(EDMD_outputs, current_outputs, equal_fields, files(k).name);
+        observed_lengths = zeros(1, n_concat_fields);
+        for i = 1:n_concat_fields
+            field_name = concat_fields{i};
+            current_value = read_required_field(current_outputs, field_name, files(k).name);
+            validate_concat_value(current_value, field_name);
+            validate_concat_shape(ref_sizes{i}, size(current_value), params.concat_dim, field_name, files(k).name);
+            observed_lengths(i) = get_concat_length(current_value, params.concat_dim);
+            if observed_lengths(i) ~= concat_lengths_by_field(k, i)
+                error(['Fast scan expected field %s in %s to have length %d along dimension %d, ', ...
+                    'but observed %d. Rerun with params.scan_mode = ''full''.'], ...
+                    field_name, files(k).name, concat_lengths_by_field(k, i), ...
+                    params.concat_dim, observed_lengths(i));
+            end
+        end
+        validate_chunk_lengths(observed_lengths, files(k).name);
+    end
+    validate_sec = toc(validate_tic);
 
     chunk_start_idx(k) = cursor;
     chunk_end_idx(k) = cursor + chunk_lengths(k) - 1;
 
+    assign_tic = tic;
     for i = 1:n_concat_fields
         field_name = concat_fields{i};
-        EDMD_outputs.(field_name) = assign_concat_block( ...
-            EDMD_outputs.(field_name), ...
-            current_outputs.(field_name), ...
-            params.concat_dim, ...
-            cursor);
+        block = current_outputs.(field_name);
+        idx = build_concat_subscripts( ...
+            ndims(EDMD_outputs.(field_name)), block, params.concat_dim, cursor);
+        EDMD_outputs.(field_name)(idx{:}) = block;
     end
+    assign_sec = toc(assign_tic);
 
     cursor = chunk_end_idx(k) + 1;
+
+    if should_print_progress(k, n_chunks, params.progress_every) && params.verbose
+        fprintf(['[load %d/%d done] %s | chunk %s ', ...
+            '(load %s, validate %s, assign %s)%s\n'], ...
+            k, n_chunks, files(k).name, format_seconds(toc(chunk_tic)), ...
+            format_seconds(load_sec), format_seconds(validate_sec), ...
+            format_seconds(assign_sec), ...
+            progress_timing_suffix(k, n_chunks, load_stage_tic, params.progress_timing));
+    end
+
+    clear current_data current_outputs block idx
 end
 
 concat_info = struct();
@@ -157,6 +246,7 @@ concat_info.chunk_end_idx = chunk_end_idx;
 concat_info.total_length = total_length;
 concat_info.concat_fields = concat_fields(:);
 concat_info.concat_dim = params.concat_dim;
+concat_info.scan_mode = params.scan_mode;
 concat_info.required_equal_fields = equal_fields(:);
 concat_info.copied_from_first_fields = copied_fields(:);
 concat_info.estimated_concat_bytes = sum(estimated_bytes);
@@ -165,6 +255,17 @@ concat_info.estimated_concat_gib = sum(estimated_bytes) / 1024^3;
 for i = 1:n_concat_fields
     field_name = concat_fields{i};
     concat_info.final_sizes.(field_name) = final_sizes{i};
+end
+
+if params.verbose
+    fprintf('Concatenated EDMD chunks: total_length=%d samples | n_chunks=%d | concat_fields=%s\n', ...
+        total_length, n_chunks, strjoin(concat_fields, ', '));
+    for i = 1:n_concat_fields
+        field_name = concat_fields{i};
+        fprintf('  %s final size: [%s] | estimated %.3f GiB\n', ...
+            field_name, num2str(final_sizes{i}), ...
+            estimated_bytes(i) / 1024^3);
+    end
 end
 end
 
@@ -187,11 +288,20 @@ if ~isfield(params, 'concat_dim') || isempty(params.concat_dim)
 end
 
 if ~isfield(params, 'required_equal_fields') || isempty(params.required_equal_fields)
-    params.required_equal_fields = {'evalues', 'kpm_modes', 'N_dict', 'residual_form'};
+    params.required_equal_fields = { ...
+        'evalues', 'kpm_modes', 'N_dict', 'residual_form', ...
+        'observable_tag', 'observable_mode', ...
+        'dt', 'dx', 'sampling_period', 'sample_period', 'fs', 'sampling_frequency', ...
+        'session_dx', 'session_fs', 'session_ids', 'session_lengths', ...
+        'session_start_idx', 'session_end_idx', 'border_idx'};
 end
 
 if ~isfield(params, 'allow_missing_chunks') || isempty(params.allow_missing_chunks)
     params.allow_missing_chunks = false;
+end
+
+if ~isfield(params, 'scan_mode') || isempty(params.scan_mode)
+    params.scan_mode = 'full';
 end
 
 if ~isfield(params, 'verbose') || isempty(params.verbose)
@@ -202,9 +312,15 @@ if ~isfield(params, 'progress_every') || isempty(params.progress_every)
     params.progress_every = 50;
 end
 
+if ~isfield(params, 'progress_timing') || isempty(params.progress_timing)
+    params.progress_timing = true;
+end
+
 params.concat_fields = normalize_cellstr(params.concat_fields, 'params.concat_fields');
 params.required_equal_fields = normalize_cellstr(params.required_equal_fields, ...
     'params.required_equal_fields');
+params.scan_mode = char(lower(string(params.scan_mode)));
+params.progress_timing = logical(params.progress_timing);
 
 if ~isscalar(params.concat_dim) || params.concat_dim < 1 || params.concat_dim ~= floor(params.concat_dim)
     error('params.concat_dim must be a positive integer.');
@@ -399,11 +515,10 @@ error('Concatenated fields in %s do not share the same time length.', file_name)
 end
 
 
-function A = assign_concat_block(A, block, concat_dim, start_idx)
-idx = repmat({':'}, 1, max(ndims(A), concat_dim));
+function idx = build_concat_subscripts(target_ndims, block, concat_dim, start_idx)
+idx = repmat({':'}, 1, max(target_ndims, concat_dim));
 stop_idx = start_idx + size_with_padding(block, concat_dim) - 1;
 idx{concat_dim} = start_idx:stop_idx;
-A(idx{:}) = block;
 end
 
 
@@ -418,6 +533,60 @@ end
 
 function tf = should_print_progress(k, n_total, progress_every)
 tf = (k == 1) || (k == n_total) || (mod(k, progress_every) == 0);
+end
+
+
+function suffix = progress_timing_suffix(k, n_total, stage_tic, enabled)
+suffix = '';
+if ~enabled
+    return;
+end
+
+elapsed_sec = toc(stage_tic);
+if ~isfinite(elapsed_sec) || elapsed_sec < 0 || k < 1
+    return;
+end
+
+chunks_per_sec = k / max(elapsed_sec, eps);
+eta_sec = max(n_total - k, 0) / max(chunks_per_sec, eps);
+suffix = sprintf(' | elapsed %s | ETA %s | %.2f chunks/s', ...
+    format_duration(elapsed_sec), format_duration(eta_sec), chunks_per_sec);
+end
+
+
+function txt = format_duration(seconds_in)
+if ~isfinite(seconds_in)
+    txt = '--:--';
+    return;
+end
+
+seconds_in = max(0, seconds_in);
+hours = floor(seconds_in / 3600);
+minutes = floor(mod(seconds_in, 3600) / 60);
+seconds = floor(mod(seconds_in, 60));
+
+if hours > 0
+    txt = sprintf('%02d:%02d:%02d', hours, minutes, seconds);
+else
+    txt = sprintf('%02d:%02d', minutes, seconds);
+end
+end
+
+
+function txt = format_seconds(seconds_in)
+if ~isfinite(seconds_in)
+    txt = '--';
+    return;
+end
+
+seconds_in = max(0, seconds_in);
+if seconds_in < 1
+    txt = sprintf('%.3fs', seconds_in);
+elseif seconds_in < 60
+    txt = sprintf('%.1fs', seconds_in);
+else
+    txt = format_duration(seconds_in);
+end
 end
 
 

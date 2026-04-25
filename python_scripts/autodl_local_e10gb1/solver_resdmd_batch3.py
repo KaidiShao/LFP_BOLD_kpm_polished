@@ -23,6 +23,15 @@ tf.keras.backend.set_floatx('float32')
 DEFAULT_AUTODL_TMP_ROOT = '/mnt/e/autodl_results/e10gb1'
 DEFAULT_CHECKPOINT_ROOT = os.path.join(DEFAULT_AUTODL_TMP_ROOT, 'checkpoints')
 READ_ONLY_AUTODL_ROOT = '/mnt/e/DataPons_processed'
+LOSS_MODE_ALIASES = {
+    'raw': 'squared',
+    'none': 'squared',
+    'squared': 'squared',
+    'per_dim': 'per_dim',
+    'relative': 'relative_target',
+    'relative_target': 'relative_target',
+}
+OPTIMIZATION_LOSS_MODE = 'squared'
 
 
 def _json_ready(value):
@@ -150,7 +159,9 @@ class KoopmanSolver(object):
             analysis_dtype='float32',
             gram_dtype='float64',
             spectral_dtype='float64',
-            residual_form='projected_kv'):
+            residual_form='projected_kv',
+            loss_mode='squared',
+            loss_epsilon=1e-12):
         """Initializer
 
         :param dic: dictionary
@@ -168,7 +179,13 @@ class KoopmanSolver(object):
         if self.residual_form not in ('projected_kv', 'projected_vlambda'):
             raise ValueError(
                 "residual_form must be 'projected_kv' or 'projected_vlambda'."
-            )
+        )
+        self.requested_loss_mode = self._normalize_loss_mode(loss_mode)
+        # Keep optimization on the historical paper objective.
+        self.loss_mode = OPTIMIZATION_LOSS_MODE
+        self.loss_epsilon = float(loss_epsilon)
+        if self.loss_epsilon <= 0.0:
+            raise ValueError("loss_epsilon must be positive.")
         self.training_policy = training_policy or (
             'mixed_float16' if tf.config.list_physical_devices('GPU') else 'float32'
         )
@@ -184,6 +201,7 @@ class KoopmanSolver(object):
         self.layer_k = None
         self.analysis_dic = None
         self.output_dim = None
+        self.loss_output_dim = None
         self.eigenvectors_var = None
         self.eigenvalues_var = None
         self.eigenvectors_inv_B = None
@@ -244,14 +262,23 @@ class KoopmanSolver(object):
         eig_start = time.time()
         print(f"eig_decomp: start, K shape={np.shape(K)}, spectral_dtype={self.spectral_dtype}")
         tensor_to_numpy_start = time.time()
-        K_np = np.array(K.numpy(), dtype=self.spectral_dtype, order='F', copy=True)
+        K_source = K.numpy() if hasattr(K, 'numpy') else np.asarray(K)
+        K_np = np.array(K_source, dtype=self.spectral_dtype, order='F', copy=True)
+        has_nan = bool(np.isnan(K_np).any())
+        has_inf = bool(np.isinf(K_np).any())
         print(
             "eig_decomp: tensor->numpy done in "
             f"{time.time() - tensor_to_numpy_start:.2f}s, "
             f"norm={np.linalg.norm(K_np):.3e}, "
             f"max_abs={np.max(np.abs(K_np)):.3e}, "
-            f"has_nan={np.isnan(K_np).any()}, has_inf={np.isinf(K_np).any()}"
+            f"has_nan={has_nan}, has_inf={has_inf}"
         )
+        if has_nan or has_inf:
+            raise FloatingPointError(
+                "eig_decomp received a non-finite Koopman matrix. "
+                f"has_nan={has_nan}, has_inf={has_inf}, "
+                f"norm={np.linalg.norm(K_np):.3e}, max_abs={np.max(np.abs(K_np)):.3e}"
+            )
         eigsolve_start = time.time()
         print("eig_decomp: starting scipy.linalg.eig")
         self.eigenvalues, self.eigenvectors = scipy.linalg.eig(
@@ -465,13 +492,26 @@ class KoopmanSolver(object):
         xtx_diag_max = float(tf.reduce_max(xtx_diag).numpy())
         xtx_has_nan = bool(tf.reduce_any(tf.math.is_nan(G)).numpy())
         xtx_has_inf = bool(tf.reduce_any(tf.math.is_inf(G)).numpy())
+        a_has_nan = bool(tf.reduce_any(tf.math.is_nan(A)).numpy())
+        a_has_inf = bool(tf.reduce_any(tf.math.is_inf(A)).numpy())
         print(
             "compute_K: batches done, "
             f"d={d}, n_total={n_total}, G diag min={xtx_diag_min:.3e}, G diag max={xtx_diag_max:.3e}, "
-            f"has_nan={xtx_has_nan}, has_inf={xtx_has_inf}, elapsed={time.time() - compute_k_start:.2f}s"
+            f"G has_nan={xtx_has_nan}, G has_inf={xtx_has_inf}, "
+            f"A has_nan={a_has_nan}, A has_inf={a_has_inf}, "
+            f"elapsed={time.time() - compute_k_start:.2f}s"
         )
         idmat = tf.eye(d, dtype=self.gram_dtype)
         system = G + tf.cast(reg, self.gram_dtype) * idmat
+        system_has_nan = bool(tf.reduce_any(tf.math.is_nan(system)).numpy())
+        system_has_inf = bool(tf.reduce_any(tf.math.is_inf(system)).numpy())
+        if xtx_has_nan or xtx_has_inf or a_has_nan or a_has_inf or system_has_nan or system_has_inf:
+            raise FloatingPointError(
+                "compute_K produced non-finite normal-equation terms. "
+                f"G(has_nan={xtx_has_nan}, has_inf={xtx_has_inf}), "
+                f"A(has_nan={a_has_nan}, has_inf={a_has_inf}), "
+                f"system(has_nan={system_has_nan}, has_inf={system_has_inf})"
+            )
         solve_start = time.time()
         print("compute_K: starting linear solve")
         use_pinv = False
@@ -500,6 +540,14 @@ class KoopmanSolver(object):
             print(
                 f"compute_K: linear solve done in {time.time() - solve_start:.2f}s, "
                 f"total compute_K time={time.time() - compute_k_start:.2f}s"
+            )
+
+        k_has_nan = bool(tf.reduce_any(tf.math.is_nan(K_reg)).numpy())
+        k_has_inf = bool(tf.reduce_any(tf.math.is_inf(K_reg)).numpy())
+        if k_has_nan or k_has_inf:
+            raise FloatingPointError(
+                "compute_K produced a non-finite Koopman matrix. "
+                f"has_nan={k_has_nan}, has_inf={k_has_inf}"
             )
 
         return K_reg
@@ -535,13 +583,47 @@ class KoopmanSolver(object):
             axis=-1
         )
 
-    def _packed_residual_loss(self, y_true, y_pred):
-        diff = tf.cast(y_pred, self.training_real_dtype) - tf.cast(y_true, self.training_real_dtype)
-        return tf.reduce_mean(tf.reduce_sum(tf.square(diff), axis=-1))
+    def _normalize_loss_mode(self, loss_mode):
+        normalized = str(loss_mode or 'squared').strip().lower()
+        if normalized not in LOSS_MODE_ALIASES:
+            allowed = "', '".join(sorted(LOSS_MODE_ALIASES))
+            raise ValueError(f"loss_mode must be one of: '{allowed}'.")
+        return LOSS_MODE_ALIASES[normalized]
 
-    def _build_training_residual(self, psi_x, psi_y):
+    def _split_packed_training_output(self, y_pred):
+        y_pred = tf.cast(y_pred, self.training_real_dtype)
+        return tf.split(y_pred, 2, axis=-1)
+
+    def squared_loss(self, y_true, y_pred):
+        residual, _ = self._split_packed_training_output(y_pred)
+        return tf.reduce_mean(tf.reduce_sum(tf.square(residual), axis=-1))
+
+    def per_dim_loss(self, y_true, y_pred):
+        residual, _ = self._split_packed_training_output(y_pred)
+        loss = tf.reduce_mean(tf.reduce_sum(tf.square(residual), axis=-1))
+        packed_dim = tf.cast(tf.shape(residual)[-1], self.training_real_dtype)
+        complex_dim = tf.maximum(
+            packed_dim / tf.cast(2.0, self.training_real_dtype),
+            tf.cast(1.0, self.training_real_dtype)
+        )
+        return loss / complex_dim
+
+    def relative_target_loss(self, y_true, y_pred):
+        residual, target = self._split_packed_training_output(y_pred)
+        residual_sq = tf.reduce_sum(tf.square(residual))
+        target_sq = tf.reduce_sum(tf.square(target))
+        eps = tf.cast(self.loss_epsilon, self.training_real_dtype)
+        return residual_sq / tf.maximum(target_sq, eps)
+
+    def _packed_residual_loss(self, y_true, y_pred):
+        return self.squared_loss(y_true, y_pred)
+
+    def _build_training_terms(self, psi_x, psi_y):
         if self.eigenvectors_var is None or self.eigenvalues_var is None:
             raise ValueError("Spectral variables must be initialized before build_model().")
+
+        psi_y_complex = tf.cast(psi_y, self.training_complex_dtype)
+        psi_y_v = tf.matmul(psi_y_complex, self.eigenvectors_var)
 
         if self.residual_form == 'projected_kv':
             if self.layer_k is None:
@@ -550,13 +632,17 @@ class KoopmanSolver(object):
             psi_y_real = tf.cast(psi_y, self.training_real_dtype)
             psi_next = self.layer_k(psi_x_real)
             psi_diff = tf.cast(psi_y_real - psi_next, self.training_complex_dtype)
-            return tf.matmul(psi_diff, self.eigenvectors_var)
+            residual = tf.matmul(psi_diff, self.eigenvectors_var)
+            return residual, psi_y_v
 
         psi_x_complex = tf.cast(psi_x, self.training_complex_dtype)
-        psi_y_complex = tf.cast(psi_y, self.training_complex_dtype)
-        psi_y_v = tf.matmul(psi_y_complex, self.eigenvectors_var)
         psi_x_v = tf.matmul(psi_x_complex, self.eigenvectors_var)
-        return psi_y_v - psi_x_v * self.eigenvalues_var
+        residual = psi_y_v - psi_x_v * self.eigenvalues_var
+        return residual, psi_y_v
+
+    def _build_training_residual(self, psi_x, psi_y):
+        residual, _ = self._build_training_terms(psi_x, psi_y)
+        return residual
 
     def _sync_training_spectral_state(self):
         if self.eigenvectors_var is not None:
@@ -567,10 +653,12 @@ class KoopmanSolver(object):
             layer_k_weights = self.model.get_layer('Layer_K').weights[0]
             layer_k_weights.assign(tf.cast(self.K, layer_k_weights.dtype))
 
-    def evaluate_spectral_residual(self, data_x, data_y, residual_form=None):
+    def evaluate_spectral_losses(self, data_x, data_y, residual_form=None):
         residual_form = residual_form or self.residual_form
         total_sq = 0.0
+        total_target_sq = 0.0
         total_n = 0
+        residual_dim = None
         batch_size = getattr(self, 'batch_size', 1024)
         eigvecs = tf.cast(self.eigenvectors, self.training_complex_dtype)
         eigvals = tf.cast(self.eigenvalues, self.training_complex_dtype)
@@ -582,6 +670,7 @@ class KoopmanSolver(object):
             y_batch = tf.convert_to_tensor(data_y[start:end], dtype=self.training_input_dtype)
             psi_x = self.dic_func(x_batch)
             psi_y = self.dic_func(y_batch)
+            psi_y_v = tf.matmul(tf.cast(psi_y, self.training_complex_dtype), eigvecs)
 
             if residual_form == 'projected_kv':
                 psi_next = tf.matmul(tf.cast(psi_x, self.training_real_dtype), k_matrix)
@@ -591,17 +680,35 @@ class KoopmanSolver(object):
                 )
             else:
                 psi_x_v = tf.matmul(tf.cast(psi_x, self.training_complex_dtype), eigvecs)
-                psi_y_v = tf.matmul(tf.cast(psi_y, self.training_complex_dtype), eigvecs)
                 residual = psi_y_v - psi_x_v * eigvals
 
             packed = self._pack_complex_residual(residual)
+            target_packed = self._pack_complex_residual(psi_y_v)
+            if residual_dim is None:
+                residual_dim = max(1, int(packed.shape[-1]) // 2)
             batch_sq = tf.reduce_sum(tf.square(packed), axis=-1)
+            target_sq = tf.reduce_sum(tf.square(target_packed), axis=-1)
             total_sq += float(tf.reduce_sum(batch_sq).numpy())
+            total_target_sq += float(tf.reduce_sum(target_sq).numpy())
             total_n += int(end - start)
 
         if total_n == 0:
-            return 0.0
-        return total_sq / total_n
+            return {
+                'squared': 0.0,
+                'per_dim': 0.0,
+                'relative_target': 0.0,
+            }
+        mean_sq = total_sq / total_n
+        dim = residual_dim or 1
+        return {
+            'squared': mean_sq,
+            'per_dim': mean_sq / dim,
+            'relative_target': total_sq / max(total_target_sq, self.loss_epsilon),
+        }
+
+    def evaluate_spectral_residual(self, data_x, data_y, residual_form=None, loss_mode=None):
+        loss_mode = self.loss_mode if loss_mode is None else self._normalize_loss_mode(loss_mode)
+        return self.evaluate_spectral_losses(data_x, data_y, residual_form=residual_form)[loss_mode]
 
 
     '''
@@ -627,8 +734,9 @@ class KoopmanSolver(object):
                                  trainable=False,
                                  dtype='float32')
 
-        residual = self._build_training_residual(self.psi_x, self.psi_y)
-        outputs = self._pack_complex_residual(residual)
+        residual, target = self._build_training_terms(self.psi_x, self.psi_y)
+        packed_residual = self._pack_complex_residual(residual)
+        outputs = tf.concat([packed_residual, self._pack_complex_residual(target)], axis=-1)
         model = Model(inputs=[inputs_x, inputs_y], outputs=outputs)
         return model
 
@@ -657,7 +765,7 @@ class KoopmanSolver(object):
         validation_data=self.ds_valid,
         epochs=epochs,
         callbacks=callbacks,
-        verbose=1
+        verbose=0
         )
 
         return history
@@ -742,7 +850,8 @@ class KoopmanSolver(object):
             x_batch.set_shape([None, x_dim])
             y_batch.set_shape([None, y_dim])
             batch_size = tf.shape(index_batch)[0]
-            zeros = tf.zeros((batch_size, self.output_dim), dtype=tf.float32)
+            target_dim = self.loss_output_dim or self.output_dim
+            zeros = tf.zeros((batch_size, target_dim), dtype=tf.float32)
             return (x_batch, y_batch), zeros
 
         ds = ds.map(map_to_zero, num_parallel_calls=tf.data.AUTOTUNE)
@@ -777,6 +886,11 @@ class KoopmanSolver(object):
             run_metadata=None
         ):
         print("build: start")
+        print(
+            f"build: loss_mode={self.loss_mode} "
+            f"(requested={self.requested_loss_mode}), "
+            f"loss_epsilon={self.loss_epsilon:.3e}"
+        )
         self.data_train = data_train
         self.batch_size = batch_size
         self.outer_history = []
@@ -828,6 +942,7 @@ class KoopmanSolver(object):
         self.compute_final_info()
         print(f"build: compute_final_info done, K shape={self.K.shape}")
         self.output_dim = int(self.K.shape[0]) * 2
+        self.loss_output_dim = self.output_dim * 2
         self.eigenvectors_var = tf.Variable(
             tf.cast(self.eigenvectors, self.training_complex_dtype),
             trainable=False,
@@ -857,7 +972,18 @@ class KoopmanSolver(object):
         print("build: build_model done")
 
         opt = Adam(lr)
-        self.model.compile(optimizer=opt, loss=self._packed_residual_loss)
+        self.model.compile(
+            optimizer=opt,
+            loss=self.squared_loss,
+            metrics=[
+                tf.keras.metrics.MeanMetricWrapper(self.squared_loss, name='squared_loss'),
+                tf.keras.metrics.MeanMetricWrapper(self.per_dim_loss, name='per_dim_loss'),
+                tf.keras.metrics.MeanMetricWrapper(
+                    self.relative_target_loss,
+                    name='relative_target_loss'
+                )
+            ]
+        )
         if hasattr(opt, 'build'):
             opt.build(self.model.trainable_variables)
         self._sync_training_spectral_state()
@@ -929,6 +1055,12 @@ class KoopmanSolver(object):
 
         losses = []
         val_losses = []
+        inner_train_metric_squared_history = []
+        inner_val_metric_squared_history = []
+        inner_train_metric_per_dim_history = []
+        inner_val_metric_per_dim_history = []
+        inner_train_metric_relative_target_history = []
+        inner_val_metric_relative_target_history = []
         learning_rate_changes = []
         stop_flag = 0
         best_val_metric = np.inf
@@ -950,6 +1082,35 @@ class KoopmanSolver(object):
             self.eigenvalues_var.assign(tf.cast(self.eigenvalues, self.training_complex_dtype))
             reg_var.assign(tf.cast(self.reg, reg_var.dtype))
 
+        def _restore_checkpoint_snapshot(checkpoint_prefix, label):
+            if checkpoint is None or not checkpoint_prefix:
+                return None
+            restore_dir = os.path.dirname(checkpoint_prefix) or '.'
+            latest_snapshot = tf.train.latest_checkpoint(restore_dir)
+            if latest_snapshot is None:
+                print(f"build: no {label} checkpoint found under {restore_dir}")
+                return None
+            checkpoint.restore(latest_snapshot)
+            self.K = K_var.numpy()
+            self.eigenvectors = self.eigenvectors_var.numpy().astype(np.complex128, copy=False)
+            self.eigenvalues = self.eigenvalues_var.numpy().astype(np.complex128, copy=False)
+            self.reg = float(reg_var.numpy())
+            self._sync_training_spectral_state()
+            print(f"build: restored {label} checkpoint from {latest_snapshot}")
+            return latest_snapshot
+
+        def _restore_best_after_failure(exc, stage, outer_epoch=None):
+            epoch_suffix = "" if outer_epoch is None else f" at outer epoch {outer_epoch}"
+            print(
+                f"build: numerical failure during {stage}{epoch_suffix}: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            restored_snapshot = _restore_checkpoint_snapshot(best_checkpoint_path, 'best')
+            if restored_snapshot is not None:
+                self.best_checkpoint_saved = True
+                return restored_snapshot
+            return None
+
         def _save_training_state(state_path, state_kind):
             if not state_path:
                 return
@@ -958,8 +1119,21 @@ class KoopmanSolver(object):
                 'schema_version': 1,
                 'state_kind': state_kind,
                 'resume_mode': resume_mode,
+                'loss_mode': self.loss_mode,
+                'requested_loss_mode': self.requested_loss_mode,
+                'loss_epsilon': self.loss_epsilon,
                 'loss_history': list(losses),
                 'val_loss_history': list(val_losses),
+                'inner_train_metric_squared_history': list(inner_train_metric_squared_history),
+                'inner_val_metric_squared_history': list(inner_val_metric_squared_history),
+                'inner_train_metric_per_dim_history': list(inner_train_metric_per_dim_history),
+                'inner_val_metric_per_dim_history': list(inner_val_metric_per_dim_history),
+                'inner_train_metric_relative_target_history': list(
+                    inner_train_metric_relative_target_history
+                ),
+                'inner_val_metric_relative_target_history': list(
+                    inner_val_metric_relative_target_history
+                ),
                 'outer_history': self.outer_history,
                 'best_val_metric': self.best_val_metric,
                 'best_outer_epoch': self.best_outer_epoch,
@@ -1004,9 +1178,51 @@ class KoopmanSolver(object):
             except Exception:
                 return float(default)
 
+        def _history_values(history, key):
+            return [float(x) for x in history.get(key, [])]
+
+        def _sync_inner_metric_history_attrs():
+            self.inner_train_metric_squared_history = list(inner_train_metric_squared_history)
+            self.inner_val_metric_squared_history = list(inner_val_metric_squared_history)
+            self.inner_train_metric_per_dim_history = list(inner_train_metric_per_dim_history)
+            self.inner_val_metric_per_dim_history = list(inner_val_metric_per_dim_history)
+            self.inner_train_metric_relative_target_history = list(
+                inner_train_metric_relative_target_history
+            )
+            self.inner_val_metric_relative_target_history = list(
+                inner_val_metric_relative_target_history
+            )
+
+        _sync_inner_metric_history_attrs()
+
         if loaded_training_state is not None:
             losses = [float(x) for x in loaded_training_state.get('loss_history', [])]
             val_losses = [float(x) for x in loaded_training_state.get('val_loss_history', [])]
+            inner_train_metric_squared_history = [
+                float(x) for x in loaded_training_state.get('inner_train_metric_squared_history', [])
+            ]
+            inner_val_metric_squared_history = [
+                float(x) for x in loaded_training_state.get('inner_val_metric_squared_history', [])
+            ]
+            inner_train_metric_per_dim_history = [
+                float(x) for x in loaded_training_state.get('inner_train_metric_per_dim_history', [])
+            ]
+            inner_val_metric_per_dim_history = [
+                float(x) for x in loaded_training_state.get('inner_val_metric_per_dim_history', [])
+            ]
+            inner_train_metric_relative_target_history = [
+                float(x) for x in loaded_training_state.get(
+                    'inner_train_metric_relative_target_history',
+                    []
+                )
+            ]
+            inner_val_metric_relative_target_history = [
+                float(x) for x in loaded_training_state.get(
+                    'inner_val_metric_relative_target_history',
+                    []
+                )
+            ]
+            _sync_inner_metric_history_attrs()
             self.outer_history = list(loaded_training_state.get('outer_history', []))
             self.best_val_metric = _safe_float(loaded_training_state.get('best_val_metric', np.nan))
             self.best_outer_epoch = loaded_training_state.get('best_outer_epoch', None)
@@ -1043,10 +1259,16 @@ class KoopmanSolver(object):
             current_outer_epoch = outer_epoch_offset + i + 1
             print(f"build: Outer Epoch {current_outer_epoch}/{target_outer_epoch}")
             print("build: compute_K start")
-            self.K = self.compute_K(self.dic_func, self.data_x_train, self.data_y_train, self.reg)
-            self.eig_decomp(self.K)
-            self.compute_mode()
-            self._sync_training_spectral_state()
+            try:
+                self.K = self.compute_K(self.dic_func, self.data_x_train, self.data_y_train, self.reg)
+                self.eig_decomp(self.K)
+                self.compute_mode()
+                self._sync_training_spectral_state()
+            except Exception as exc:
+                if _restore_best_after_failure(exc, 'pre-train spectral update', current_outer_epoch) is None:
+                    raise
+                stop_flag = 1
+                break
             print("build: compute_K done")
 
             if self.residual_form == 'projected_kv':
@@ -1058,7 +1280,7 @@ class KoopmanSolver(object):
             self.history = self.train_psi(
                 self.model,
                 epochs=Nepoch,
-                callbacks=[EarlyStopping(monitor='val_loss', min_delta=1e-6, patience=2, verbose=1, mode='min', restore_best_weights=True)]
+                callbacks=[EarlyStopping(monitor='val_loss', min_delta=1e-6, patience=2, verbose=0, mode='min', restore_best_weights=True)]
             )
             print(f"build: train_psi done, history length={len(self.history.history['loss'])}")
 
@@ -1067,28 +1289,78 @@ class KoopmanSolver(object):
             print(f"build: post-gc memory usage={mem} MiB")
 
             print("build: post-train compute_K start")
-            self.K = self.compute_K(self.dic_func, self.data_x_train, self.data_y_train, self.reg)
-            self.eig_decomp(self.K)
-            self.compute_mode()
-            self._sync_training_spectral_state()
+            try:
+                self.K = self.compute_K(self.dic_func, self.data_x_train, self.data_y_train, self.reg)
+                self.eig_decomp(self.K)
+                self.compute_mode()
+                self._sync_training_spectral_state()
+            except Exception as exc:
+                if _restore_best_after_failure(exc, 'post-train spectral update', current_outer_epoch) is None:
+                    raise
+                stop_flag = 1
+                break
             print("build: post-train compute_K done")
 
             inner_train_last = float(self.history.history['loss'][-1]) if self.history.history.get('loss') else np.nan
             inner_val_last = float(self.history.history['val_loss'][-1]) if self.history.history.get('val_loss') else np.nan
-            train_metric = self.evaluate_spectral_residual(self.data_x_train, self.data_y_train)
-            val_metric = self.evaluate_spectral_residual(self.data_valid[0], self.data_valid[1])
+            inner_train_squared_last = (
+                float(self.history.history['squared_loss'][-1])
+                if self.history.history.get('squared_loss')
+                else np.nan
+            )
+            inner_val_squared_last = (
+                float(self.history.history['val_squared_loss'][-1])
+                if self.history.history.get('val_squared_loss')
+                else np.nan
+            )
+            inner_train_per_dim_last = (
+                float(self.history.history['per_dim_loss'][-1])
+                if self.history.history.get('per_dim_loss')
+                else np.nan
+            )
+            inner_val_per_dim_last = (
+                float(self.history.history['val_per_dim_loss'][-1])
+                if self.history.history.get('val_per_dim_loss')
+                else np.nan
+            )
+            inner_train_relative_target_last = (
+                float(self.history.history['relative_target_loss'][-1])
+                if self.history.history.get('relative_target_loss')
+                else np.nan
+            )
+            inner_val_relative_target_last = (
+                float(self.history.history['val_relative_target_loss'][-1])
+                if self.history.history.get('val_relative_target_loss')
+                else np.nan
+            )
+            train_metrics = self.evaluate_spectral_losses(self.data_x_train, self.data_y_train)
+            val_metrics = self.evaluate_spectral_losses(self.data_valid[0], self.data_valid[1])
+            train_metric = train_metrics[OPTIMIZATION_LOSS_MODE]
+            val_metric = val_metrics[OPTIMIZATION_LOSS_MODE]
             self.outer_history.append({
                 'outer_epoch': current_outer_epoch,
                 'inner_train_last': inner_train_last,
                 'inner_val_last': inner_val_last,
+                'inner_train_squared_last': inner_train_squared_last,
+                'inner_val_squared_last': inner_val_squared_last,
+                'inner_train_per_dim_last': inner_train_per_dim_last,
+                'inner_val_per_dim_last': inner_val_per_dim_last,
+                'inner_train_relative_target_last': inner_train_relative_target_last,
+                'inner_val_relative_target_last': inner_val_relative_target_last,
                 'train_metric': train_metric,
                 'val_metric': val_metric,
+                'train_metric_squared': train_metrics['squared'],
+                'val_metric_squared': val_metrics['squared'],
+                'train_metric_per_dim': train_metrics['per_dim'],
+                'val_metric_per_dim': val_metrics['per_dim'],
+                'train_metric_relative_target': train_metrics['relative_target'],
+                'val_metric_relative_target': val_metrics['relative_target'],
                 'eigvec_cond': self.eigvec_cond,
                 'lr': float(opt.lr.numpy()),
                 'reg': float(self.reg)
             })
             print(
-                f"build: outer metrics train={train_metric:.6e}, "
+                f"build: outer metrics ({OPTIMIZATION_LOSS_MODE}) train={train_metric:.6e}, "
                 f"val={val_metric:.6e}, eigvec_cond={self.eigvec_cond:.3e}"
             )
 
@@ -1129,6 +1401,25 @@ class KoopmanSolver(object):
             if i % log_interval == 0:
                 losses.extend(self.history.history['loss'])
                 val_losses.extend(self.history.history['val_loss'])
+                inner_train_metric_squared_history.extend(
+                    _history_values(self.history.history, 'squared_loss')
+                )
+                inner_val_metric_squared_history.extend(
+                    _history_values(self.history.history, 'val_squared_loss')
+                )
+                inner_train_metric_per_dim_history.extend(
+                    _history_values(self.history.history, 'per_dim_loss')
+                )
+                inner_val_metric_per_dim_history.extend(
+                    _history_values(self.history.history, 'val_per_dim_loss')
+                )
+                inner_train_metric_relative_target_history.extend(
+                    _history_values(self.history.history, 'relative_target_loss')
+                )
+                inner_val_metric_relative_target_history.extend(
+                    _history_values(self.history.history, 'val_relative_target_loss')
+                )
+                _sync_inner_metric_history_attrs()
 
             should_save_best_checkpoint = (
                 checkpoint is not None
@@ -1180,7 +1471,13 @@ class KoopmanSolver(object):
                     break
 
         print("build: final compute_final_info start")
-        self.compute_final_info()
+        try:
+            self.compute_final_info()
+        except Exception as exc:
+            if _restore_best_after_failure(exc, 'final compute_final_info') is None:
+                raise
+            print("build: retrying final compute_final_info from restored best checkpoint")
+            self.compute_final_info()
         print("build: final compute_final_info done")
         self._sync_training_spectral_state()
         _sync_checkpoint_state()

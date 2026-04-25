@@ -39,6 +39,7 @@ fig = figure( ...
     'Color', plot_cfg.background_color, ...
     'Position', plot_cfg.figure_position, ...
     'Name', plot_cfg.title, ...
+    'Visible', plot_cfg.figure_visible, ...
     'NumberTitle', 'off');
 
 tiled = tiledlayout(fig, 1, 4, 'TileSpacing', 'compact', 'Padding', 'compact');
@@ -117,6 +118,14 @@ if ~isfield(plot_cfg, 'figure_position') || isempty(plot_cfg.figure_position)
     plot_cfg.figure_position = [80, 120, 1260, 360];
 end
 
+if ~isfield(plot_cfg, 'figure_visible') || isempty(plot_cfg.figure_visible)
+    if isfield(plot_cfg, 'save_figure') && isequal(plot_cfg.save_figure, true)
+        plot_cfg.figure_visible = 'off';
+    else
+        plot_cfg.figure_visible = 'on';
+    end
+end
+
 if ~isfield(plot_cfg, 'background_color') || isempty(plot_cfg.background_color)
     plot_cfg.background_color = [0, 0, 0];
 end
@@ -174,7 +183,7 @@ if ~isfield(plot_cfg, 'save_dir') || isempty(plot_cfg.save_dir)
 end
 
 if ~isfield(plot_cfg, 'save_tag')
-    plot_cfg.save_tag = 'spectrum_diag';
+    plot_cfg.save_tag = 'spec';
 end
 end
 
@@ -234,10 +243,10 @@ end
 
 function save_path = local_build_save_path(plot_cfg, result)
 timestamp = char(datetime('now', 'Format', 'yyyyMMdd_HHmmss'));
-pieces = {'eigenfunction_spectrum', lower(result.meta.feature_variant), lower(result.meta.method)};
+pieces = {'efun_spec', lower(result.meta.feature_variant), lower(result.meta.method)};
 
 if isfield(plot_cfg, 'save_tag') && ~isempty(plot_cfg.save_tag)
-    pieces{end + 1} = plot_cfg.save_tag; %#ok<AGROW>
+    pieces{end + 1} = plot_cfg.save_tag;
 end
 
 filename = strjoin(pieces, '__');

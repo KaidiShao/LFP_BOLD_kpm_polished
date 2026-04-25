@@ -33,6 +33,7 @@ fig = figure( ...
     'Color', plot_cfg.background_color, ...
     'Position', plot_cfg.figure_position, ...
     'Name', plot_cfg.title, ...
+    'Visible', plot_cfg.figure_visible, ...
     'NumberTitle', 'off');
 
 tiled = tiledlayout(fig, n_comp + 2, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
@@ -124,6 +125,14 @@ if ~isfield(plot_cfg, 'figure_position') || isempty(plot_cfg.figure_position)
     plot_cfg.figure_position = [120, 80, 1180, 820];
 end
 
+if ~isfield(plot_cfg, 'figure_visible') || isempty(plot_cfg.figure_visible)
+    if isfield(plot_cfg, 'save_figure') && isequal(plot_cfg.save_figure, true)
+        plot_cfg.figure_visible = 'off';
+    else
+        plot_cfg.figure_visible = 'on';
+    end
+end
+
 if ~isfield(plot_cfg, 'background_color') || isempty(plot_cfg.background_color)
     plot_cfg.background_color = [0, 0, 0];
 end
@@ -185,7 +194,7 @@ if ~isfield(plot_cfg, 'save_dir') || isempty(plot_cfg.save_dir)
 end
 
 if ~isfield(plot_cfg, 'save_tag')
-    plot_cfg.save_tag = 'overview';
+    plot_cfg.save_tag = 'ov';
 end
 end
 
@@ -284,10 +293,10 @@ end
 
 function save_path = local_build_save_path(plot_cfg, result)
 timestamp = char(datetime('now', 'Format', 'yyyyMMdd_HHmmss'));
-pieces = {'eigenfunction_components', lower(result.meta.path_kind), lower(result.meta.feature_variant)};
+pieces = {'efun_comp', lower(result.meta.path_kind), lower(result.meta.feature_variant)};
 
 if isfield(plot_cfg, 'save_tag') && ~isempty(plot_cfg.save_tag)
-    pieces{end + 1} = plot_cfg.save_tag; %#ok<AGROW>
+    pieces{end + 1} = plot_cfg.save_tag;
 end
 
 filename = strjoin(pieces, '__');

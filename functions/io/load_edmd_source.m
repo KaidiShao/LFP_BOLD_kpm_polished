@@ -1,5 +1,5 @@
 function [EDMD_outputs, concat_info, source_info] = load_edmd_source(source_cfg)
-%LOAD_EDMD_SOURCE Load EDMD outputs either from chunks or from one MAT file.
+%LOAD_EDMD_SOURCE Load EDMD outputs from chunks, one MAT file, or memory.
 
 if nargin < 1 || isempty(source_cfg)
     error('source_cfg must be provided.');
@@ -10,6 +10,27 @@ if ~isfield(source_cfg, 'mode') || isempty(source_cfg.mode)
 end
 
 switch lower(source_cfg.mode)
+    case 'preloaded'
+        if ~isfield(source_cfg, 'preloaded_EDMD_outputs') || ...
+                isempty(source_cfg.preloaded_EDMD_outputs)
+            error('source_cfg.preloaded_EDMD_outputs must be provided for preloaded mode.');
+        end
+
+        EDMD_outputs = source_cfg.preloaded_EDMD_outputs;
+        if isfield(source_cfg, 'preloaded_concat_info')
+            concat_info = source_cfg.preloaded_concat_info;
+        else
+            concat_info = [];
+        end
+
+        if isfield(source_cfg, 'preloaded_source_info') && ...
+                ~isempty(source_cfg.preloaded_source_info)
+            source_info = source_cfg.preloaded_source_info;
+        else
+            source_info = struct();
+        end
+        source_info.cache_mode = 'preloaded';
+
     case 'chunk_dir'
         if ~isfield(source_cfg, 'data_dir') || isempty(source_cfg.data_dir)
             error('source_cfg.data_dir must be provided for chunk_dir mode.');
@@ -52,7 +73,8 @@ switch lower(source_cfg.mode)
         source_info.path = edmd_file;
 
     otherwise
-        error('Unknown source_cfg.mode = %s. Use ''chunk_dir'' or ''mat_file''.', source_cfg.mode);
+        error(['Unknown source_cfg.mode = %s. Use ''chunk_dir'', ', ...
+            '''mat_file'', or ''preloaded''.'], source_cfg.mode);
 end
 end
 

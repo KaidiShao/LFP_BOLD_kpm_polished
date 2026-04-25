@@ -10,5 +10,7 @@ params.high_group_size = 2;
 params.chunk_size = 200000;
 params.precision = 'single';
 
+output_root = get_project_processed_root();
+
 dict = build_reskoopnet_dicts( ...
-    D, cfg, 'D:\DataPons_processed\', params);
+    D, cfg, output_root, params);

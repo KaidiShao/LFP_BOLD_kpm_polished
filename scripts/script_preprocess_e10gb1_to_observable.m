@@ -20,7 +20,7 @@ cfg = cfg_E10gb1();
 cfg.spectrogram.pad_sec = 20;
 cfg.spectrogram.pad_mode = 'mirror';
 
-output_root = 'E:\DataPons_processed\';
+output_root = get_project_processed_root();
 
 fprintf('Running preprocessing for %s\n', cfg.dataset_id);
 fprintf('Raw data root:\n  %s\n', cfg.raw_data_root);

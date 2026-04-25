@@ -47,11 +47,30 @@ t_spec = base_plot_cache.t_spec;
 f_spec = base_plot_cache.f_spec;
 regions = base_plot_cache.regions;
 freq_lim = base_plot_cache.freq_lim;
+spec_global_clim = [];
+if isfield(base_plot_cache, 'spec_global_clim')
+    spec_global_clim = base_plot_cache.spec_global_clim;
+end
+
+if isempty(clim) && ~isempty(spec_global_clim)
+    clim = spec_global_clim;
+end
 
 trace_linewidth = base_plot_cache.plot_settings.trace_linewidth;
 
+title_font_size = 22;
+panel_title_font_size = 18;
+axis_label_font_size = 16;
+tick_font_size = 14;
+legend_font_size = 18;
+colorbar_font_size = 14;
+
 n_regions = size(spec_seg, 3);
-hfig = figure('Color', 'w', 'Position', [100, 100, 1000, 260 + 220 * n_regions]);
+hfig = figure( ...
+    'Color', 'w', ...
+    'Position', [100, 100, 1000, 260 + 220 * n_regions], ...
+    'MenuBar', 'none', ...
+    'ToolBar', 'none');
 tl = tiledlayout(n_regions + 1, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
 ax_all = gobjects(n_regions + 1, 1);
 
@@ -136,21 +155,31 @@ end
 
 if show_events
     if show_consensus
-        title(ax1, sprintf('Original Local Field Potential Signals with Detected Events and Consensus-State Windows: %.3f-%.3f s', t1, t2));
+        trace_title_lines = { ...
+            'Original Local Field Potential Signals', ...
+            sprintf('Detected Events + Consensus-State Windows | %.3f-%.3f s', t1, t2)};
     else
-        title(ax1, sprintf('Original Local Field Potential Signals with Detected Events: %.3f-%.3f s', t1, t2));
+        trace_title_lines = { ...
+            'Original Local Field Potential Signals', ...
+            sprintf('Detected Events | %.3f-%.3f s', t1, t2)};
     end
 else
     if show_consensus
-        title(ax1, sprintf('Original Local Field Potential Signals with Consensus-State Windows: %.3f-%.3f s', t1, t2));
+        trace_title_lines = { ...
+            'Original Local Field Potential Signals', ...
+            sprintf('Consensus-State Windows | %.3f-%.3f s', t1, t2)};
     else
-        title(ax1, sprintf('Original Local Field Potential Signals: %.3f-%.3f s', t1, t2));
+        trace_title_lines = { ...
+            'Original Local Field Potential Signals', ...
+            sprintf('%.3f-%.3f s', t1, t2)};
     end
 end
+title(ax1, trace_title_lines, 'FontSize', title_font_size, 'FontWeight', 'bold');
 xlim(ax1, [t1, t2]);
 ylim(ax1, [y_min, y_max]);
 set(ax1, 'YTick', ytick_pos, 'YTickLabel', ytick_labels);
 set(ax1, 'Box', 'off');
+set(ax1, 'FontSize', tick_font_size);
 
 if n_regions >= 1
     set(ax1, 'XTickLabel', []);
@@ -187,7 +216,9 @@ if show_events || show_consensus
         end
     end
 
-    legend(ax1, legend_handles, legend_labels, 'Location', 'northeastoutside', 'Box', 'off');
+    lgd = legend(ax1, legend_handles, legend_labels, 'Location', 'northeastoutside', 'Box', 'off');
+    set(lgd, 'FontSize', legend_font_size);
+    set(lgd, 'ItemTokenSize', [22, 18]);
 end
 
 for r = 1:n_regions
@@ -200,7 +231,13 @@ for r = 1:n_regions
     local_apply_colormap(ax, cmap_in);
 
     if ~isempty(clim)
-        clim(ax, clim);
+        if size(clim, 1) == 1
+            set(ax, 'CLim', clim);
+        elseif size(clim, 1) >= r
+            set(ax, 'CLim', clim(r, :));
+        else
+            error('clim must be 1x2 or N_regions x 2.');
+        end
     end
 
     hold(ax, 'on');
@@ -208,19 +245,22 @@ for r = 1:n_regions
         xline(ax, border_t_raw(i), '--', 'Color', [0.6 0.6 0.6], 'LineWidth', 0.8);
     end
 
-    title(ax, sprintf('Power Spectrogram (%s)', regions{r}));
-    ylabel(ax, 'Frequency (Hz)');
+    title(ax, sprintf('Power Spectrogram (%s)', regions{r}), ...
+        'FontSize', panel_title_font_size, 'FontWeight', 'bold');
+    ylabel(ax, 'Frequency (Hz)', 'FontSize', axis_label_font_size, 'FontWeight', 'bold');
     xlim(ax, [t1, t2]);
     ylim(ax, freq_lim);
     set(ax, 'Box', 'off');
+    set(ax, 'FontSize', tick_font_size);
 
     if r < n_regions
         set(ax, 'XTickLabel', []);
     else
-        xlabel(ax, 'Time (s)');
+        xlabel(ax, 'Time (s)', 'FontSize', axis_label_font_size, 'FontWeight', 'bold');
     end
 
-    colorbar(ax);
+    cb = colorbar(ax);
+    cb.FontSize = colorbar_font_size;
 end
 
 linkaxes(ax_all, 'x');

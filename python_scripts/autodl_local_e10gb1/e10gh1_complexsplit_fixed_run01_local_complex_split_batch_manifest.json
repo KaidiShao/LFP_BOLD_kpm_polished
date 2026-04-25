@@ -1,0 +1,50 @@
+{
+  "experiment_name": "e10gh1_complexsplit_fixed_run01",
+  "dataset_stems": [
+    "e10gh1"
+  ],
+  "residual_forms": [
+    "projected_kv",
+    "projected_vlambda"
+  ],
+  "observable_mode": "complex_split",
+  "epochs": 60,
+  "run_script": "/mnt/d/Onedrive/ICPBR/Alberta/koopman_events/LFP_BOLD_kpm_polished/python_scripts/autodl/run_autodl_reskoopnet_mlp.py",
+  "local_solver_root": "/mnt/d/Onedrive/ICPBR/Alberta/koopman_events/LFP_BOLD_kpm_polished/python_scripts/autodl_local_e10gb1",
+  "started_at_unix": 1776742116.1972141,
+  "runs": [
+    {
+      "dataset_stem": "e10gh1",
+      "residual_form": "projected_kv",
+      "return_code": 0,
+      "duration_sec": 18748.316120624542,
+      "results_root": "/mnt/e/autodl_results/e10gh1/mlp",
+      "loss_plot": {
+        "ok": true,
+        "reason": "Generated training loss diagnostics.",
+        "png": "/mnt/e/autodl_results/e10gh1/mlp/outputs/mlp_obs_e10gh1_complexsplit_fixed_run01_projected_kv_complex_split/training_loss_diagnostics.png",
+        "pdf": "/mnt/e/autodl_results/e10gh1/mlp/outputs/mlp_obs_e10gh1_complexsplit_fixed_run01_projected_kv_complex_split/training_loss_diagnostics.pdf",
+        "loss_len": 274,
+        "val_loss_len": 274,
+        "outer_epochs": 60
+      }
+    },
+    {
+      "dataset_stem": "e10gh1",
+      "residual_form": "projected_vlambda",
+      "return_code": 0,
+      "duration_sec": 19206.14798259735,
+      "results_root": "/mnt/e/autodl_results/e10gh1/mlp",
+      "loss_plot": {
+        "ok": true,
+        "reason": "Generated training loss diagnostics.",
+        "png": "/mnt/e/autodl_results/e10gh1/mlp/outputs/mlp_obs_e10gh1_complexsplit_fixed_run01_projected_vlambda_complex_split/training_loss_diagnostics.png",
+        "pdf": "/mnt/e/autodl_results/e10gh1/mlp/outputs/mlp_obs_e10gh1_complexsplit_fixed_run01_projected_vlambda_complex_split/training_loss_diagnostics.pdf",
+        "loss_len": 257,
+        "val_loss_len": 257,
+        "outer_epochs": 60
+      }
+    }
+  ],
+  "finished_at_unix": 1776780074.3891504
+}

@@ -10,14 +10,19 @@ if nargin < 2
 end
 
 plot_cfg = local_apply_defaults(plot_cfg, result);
-[traj_raw, traj_plot, source_name] = local_get_component_series(result, plot_cfg);
+[~, traj_plot, source_name] = local_get_component_series(result, plot_cfg);
 
 if size(traj_plot, 2) < 3
     error('At least 3 temporal components are required to plot a 3D state-space trajectory.');
 end
 
-window_idx = local_resolve_window_idx(plot_cfg.window_idx, size(traj_plot, 1));
-traj_raw = traj_raw(window_idx, :);
+full_window_idx = local_resolve_window_idx(plot_cfg.window_idx, size(traj_plot, 1));
+[window_idx, downsample_info] = local_apply_plot_downsample(full_window_idx, plot_cfg);
+local_print(plot_cfg, ['[state-space] Using %d/%d samples ', ...
+    '(downsample_step=%s, max_plot_points=%s).\n'], ...
+    numel(window_idx), numel(full_window_idx), ...
+    local_num_to_text(plot_cfg.downsample_step), ...
+    local_num_to_text(plot_cfg.max_plot_points));
 traj_plot = traj_plot(window_idx, :);
 
 x = traj_plot(:, 1);
@@ -36,6 +41,7 @@ fig = figure( ...
     'Color', plot_cfg.background_color, ...
     'Position', plot_cfg.figure_position, ...
     'Name', plot_cfg.title, ...
+    'Visible', plot_cfg.figure_visible, ...
     'NumberTitle', 'off');
 
 tiled = tiledlayout(fig, 2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
@@ -46,6 +52,7 @@ cmaps = {plot_cfg.value_colormap, plot_cfg.value_colormap, plot_cfg.value_colorm
 
 axes_list = gobjects(4, 1);
 for i = 1:4
+    local_print(plot_cfg, '[state-space] Drawing panel %d/4...\n', i);
     ax = nexttile(tiled);
     axes_list(i) = ax;
     local_plot_colored_trajectory(ax, x, y, z, color_values{i}, plot_cfg);
@@ -67,6 +74,11 @@ linkprop(axes_list, {'XLim', 'YLim', 'ZLim'});
 
 plot_info = struct();
 plot_info.window_idx = window_idx;
+plot_info.n_full_window_samples = numel(full_window_idx);
+plot_info.n_plotted_samples = numel(window_idx);
+plot_info.downsample_step_estimate = downsample_info.step_estimate;
+plot_info.requested_downsample_step = downsample_info.requested_step;
+plot_info.max_plot_points_applied = downsample_info.cap_applied;
 plot_info.component_source = source_name;
 plot_info.save_path = '';
 
@@ -75,7 +87,9 @@ if plot_cfg.save_figure
         mkdir(plot_cfg.save_dir);
     end
     save_path = local_build_save_path(plot_cfg, result);
-    exportgraphics(fig, save_path, 'Resolution', 220);
+    local_print(plot_cfg, '[state-space] Saving figure: %s\n', save_path);
+    exportgraphics(fig, save_path, 'Resolution', plot_cfg.figure_resolution);
+    local_print(plot_cfg, '[state-space] Saved figure.\n');
     plot_info.save_path = save_path;
 end
 end
@@ -92,6 +106,14 @@ end
 
 if ~isfield(plot_cfg, 'figure_position') || isempty(plot_cfg.figure_position)
     plot_cfg.figure_position = [120, 100, 1040, 860];
+end
+
+if ~isfield(plot_cfg, 'figure_visible') || isempty(plot_cfg.figure_visible)
+    if isfield(plot_cfg, 'save_figure') && isequal(plot_cfg.save_figure, true)
+        plot_cfg.figure_visible = 'off';
+    else
+        plot_cfg.figure_visible = 'on';
+    end
 end
 
 if ~isfield(plot_cfg, 'background_color') || isempty(plot_cfg.background_color)
@@ -114,6 +136,14 @@ if ~isfield(plot_cfg, 'line_width') || isempty(plot_cfg.line_width)
     plot_cfg.line_width = 1.15;
 end
 
+if ~isfield(plot_cfg, 'downsample_step') || isempty(plot_cfg.downsample_step)
+    plot_cfg.downsample_step = 10;
+end
+
+if ~isfield(plot_cfg, 'max_plot_points') || isempty(plot_cfg.max_plot_points)
+    plot_cfg.max_plot_points = Inf;
+end
+
 if ~isfield(plot_cfg, 'view_angle') || isempty(plot_cfg.view_angle)
     plot_cfg.view_angle = [37, 24];
 end
@@ -134,6 +164,14 @@ if ~isfield(plot_cfg, 'save_figure') || isempty(plot_cfg.save_figure)
     plot_cfg.save_figure = false;
 end
 
+if ~isfield(plot_cfg, 'figure_resolution') || isempty(plot_cfg.figure_resolution)
+    plot_cfg.figure_resolution = 180;
+end
+
+if ~isfield(plot_cfg, 'verbose') || isempty(plot_cfg.verbose)
+    plot_cfg.verbose = true;
+end
+
 if ~isfield(plot_cfg, 'save_dir') || isempty(plot_cfg.save_dir)
     if isfield(result, 'cfg') && isfield(result.cfg, 'save') && isfield(result.cfg.save, 'dir')
         plot_cfg.save_dir = result.cfg.save.dir;
@@ -143,7 +181,7 @@ if ~isfield(plot_cfg, 'save_dir') || isempty(plot_cfg.save_dir)
 end
 
 if ~isfield(plot_cfg, 'save_tag')
-    plot_cfg.save_tag = 'state_space';
+    plot_cfg.save_tag = 'ss';
 end
 end
 
@@ -196,6 +234,37 @@ end
 end
 
 
+function [window_idx, info] = local_apply_plot_downsample(window_idx, plot_cfg)
+n_full = numel(window_idx);
+max_points = double(plot_cfg.max_plot_points);
+requested_step = double(plot_cfg.downsample_step);
+
+info = struct();
+info.requested_step = requested_step;
+info.cap_applied = false;
+info.step_estimate = 1;
+
+if isscalar(requested_step) && isfinite(requested_step) && requested_step > 1
+    requested_step = max(1, round(requested_step));
+    sample_pos = 1:requested_step:n_full;
+    if sample_pos(end) ~= n_full
+        sample_pos(end + 1) = n_full;
+    end
+    window_idx = window_idx(sample_pos);
+    info.step_estimate = n_full / max(1, numel(window_idx));
+end
+
+if isscalar(max_points) && isfinite(max_points) && max_points > 0 && ...
+        numel(window_idx) > max_points
+    max_points = max(2, round(max_points));
+    sample_pos = unique(round(linspace(1, numel(window_idx), max_points)), 'stable');
+    window_idx = window_idx(sample_pos);
+    info.cap_applied = true;
+    info.step_estimate = n_full / max(1, numel(window_idx));
+end
+end
+
+
 function local_plot_colored_trajectory(ax, x, y, z, c, plot_cfg)
 surface(ax, ...
     [x.'; x.'], ...
@@ -223,12 +292,30 @@ box(ax, 'off');
 end
 
 
+function local_print(plot_cfg, varargin)
+if isfield(plot_cfg, 'verbose') && isequal(plot_cfg.verbose, true)
+    fprintf(varargin{:});
+end
+end
+
+
+function txt = local_num_to_text(value)
+if isempty(value)
+    txt = '[]';
+elseif isscalar(value) && isfinite(double(value))
+    txt = sprintf('%g', double(value));
+else
+    txt = char(string(value));
+end
+end
+
+
 function save_path = local_build_save_path(plot_cfg, result)
 timestamp = char(datetime('now', 'Format', 'yyyyMMdd_HHmmss'));
-pieces = {'eigenfunction_state_space', lower(result.meta.path_kind), lower(result.meta.feature_variant)};
+pieces = {'efun_ss', lower(result.meta.path_kind), lower(result.meta.feature_variant)};
 
 if isfield(plot_cfg, 'save_tag') && ~isempty(plot_cfg.save_tag)
-    pieces{end + 1} = plot_cfg.save_tag; %#ok<AGROW>
+    pieces{end + 1} = plot_cfg.save_tag;
 end
 
 filename = strjoin(pieces, '__');

@@ -1,6 +1,6 @@
 cfg = cfg_F12m01();
 
-output_root = 'D:\DataPons_processed\';
+output_root = get_project_processed_root();
 event_input = [];
 [R, source_event_file] = load_event_results(cfg, output_root, event_input);
 

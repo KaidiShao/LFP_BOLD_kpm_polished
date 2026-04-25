@@ -27,8 +27,19 @@ cfg.sessions(1).include = true;
 cfg.sessions(1).selected_channels = cfg.channels.selected_all;
 cfg.sessions(1).notes = 'polar'; % polar visual stimulation
 
-cfg.sessions(2).session_id = [6:16, 21:25];
+cfg.sessions(2).session_id = [6:14];
 cfg.sessions(2).include = true;
 cfg.sessions(2).selected_channels = cfg.channels.selected_all;
 cfg.sessions(2).notes = 'spont'; % spontaneous
+
+cfg.sessions(3).session_id = [15, 16];
+cfg.sessions(3).include = false;
+cfg.sessions(3).selected_channels = cfg.channels.selected_all;
+cfg.sessions(3).notes = 'other'; % different sampling rate in roiTs
+
+cfg.sessions(4).session_id = [21:25];
+cfg.sessions(4).include = false;
+cfg.sessions(4).selected_channels = cfg.channels.selected_all;
+cfg.sessions(4).notes = 'poor'; % poor neural data & different sampling rate in spike/roiTs
+
 end

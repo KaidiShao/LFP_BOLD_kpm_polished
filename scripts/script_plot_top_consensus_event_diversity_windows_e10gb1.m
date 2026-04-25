@@ -1,3 +1,9 @@
+% Canonical e10gb1 diversity-plotting entry point.
+% This script always uses the 6000-sample global-window diversity result:
+%   e10gb1_event_diversity_windows_6000samp_globalwin.mat
+% and writes plots into:
+%   E:\DataPons_processed\e10gb1\event_diversity_windows\top_window_plots
+
 this_script_dir = fileparts(mfilename('fullpath'));
 repo_root = fileparts(this_script_dir);
 addpath(genpath(repo_root));
@@ -18,15 +24,17 @@ cfg.plot.within_gap = 1.4;
 cfg.plot.between_gap = 2.2;
 cfg.plot.trace_linewidth = 0.4;
 
-output_root = 'E:\DataPons_processed\';
+output_root = get_project_processed_root();
 window_result_file = fullfile(output_root, cfg.file_stem, 'event_diversity_windows', ...
-    [cfg.file_stem, '_event_diversity_windows_5000samp.mat']);
+    [cfg.file_stem, '_event_diversity_windows_6000samp_globalwin.mat']);
 
 save_cfg = struct();
 save_cfg.save_dir = fullfile(output_root, cfg.file_stem, 'event_diversity_windows', 'top_window_plots');
 save_cfg.save_png = true;
 save_cfg.close_after_save = true;
 save_cfg.skip_existing = false;
+save_cfg.fallback_size_px = [4979, 2888];
+save_cfg.reference_dir = fullfile(save_cfg.save_dir, 'ref_figs');
 
 event_colors = [ ...
     0.0000, 0.4470, 0.7410; ...
@@ -44,6 +52,7 @@ end
 
 S = load(window_result_file, 'W');
 W = S.W;
+local_validate_e10gb1_diversity_result(W, window_result_file);
 top_windows = W.top_windows_table;
 
 if isempty(top_windows)
@@ -71,10 +80,9 @@ for i = 1:height(top_windows)
     idx1 = double(top_windows.global_start_idx(i));
     idx2 = double(top_windows.global_end_idx(i));
 
-    file_stub = sprintf('rank_%02d_session_%02d_window_%03d', ...
+    file_stub = sprintf('rank_%02d_globalwin_%03d', ...
         double(top_windows.diversity_rank(i)), ...
-        double(top_windows.session_id(i)), ...
-        double(top_windows.window_idx_in_session(i)));
+        double(top_windows.global_window_idx(i)));
     png_file = fullfile(save_cfg.save_dir, [file_stub, '.png']);
 
     if save_cfg.skip_existing && exist(png_file, 'file') == 2
@@ -91,29 +99,37 @@ for i = 1:height(top_windows)
 
     hfig = plot_blp_segment_with_spectrogram(base_plot_cache, spec_colormap, color_limits);
 
-    fig_title = sprintf(['Rank %d | session %d window %d | samples [%d,%d] | ' ...
-        'theta=%d gamma=%d ripple=%d | total=%d'], ...
+    title_line_1 = sprintf('Rank %d | globalwin %d | sessions %d->%d | samples [%d,%d]', ...
         double(top_windows.diversity_rank(i)), ...
-        double(top_windows.session_id(i)), ...
-        double(top_windows.window_idx_in_session(i)), ...
+        double(top_windows.global_window_idx(i)), ...
+        double(top_windows.start_session_id(i)), ...
+        double(top_windows.end_session_id(i)), ...
         idx1, ...
-        idx2, ...
+        idx2);
+    title_line_2 = sprintf('theta=%d | gamma=%d | ripple=%d | total=%d', ...
         double(top_windows.theta_count(i)), ...
         double(top_windows.gamma_count(i)), ...
         double(top_windows.ripple_count(i)), ...
         double(top_windows.total_event_count(i)));
+    fig_title = sprintf('%s | %s', title_line_1, title_line_2);
 
     tl = findobj(hfig, 'Type', 'tiledlayout');
     if ~isempty(tl)
-        title(tl(1), fig_title, 'Interpreter', 'none');
+        title(tl(1), {title_line_1, title_line_2}, 'Interpreter', 'none', ...
+            'FontSize', 24, 'FontWeight', 'bold');
     else
         set(hfig, 'Name', fig_title, 'NumberTitle', 'off');
     end
 
     set(hfig, 'Name', fig_title, 'NumberTitle', 'off');
+    target_size_px = local_get_reference_export_size(save_cfg);
+    set(hfig, 'Units', 'pixels');
+    fig_pos = get(hfig, 'Position');
+    fig_pos(3:4) = target_size_px;
+    set(hfig, 'Position', fig_pos);
     drawnow;
 
-    exportgraphics(hfig, png_file, 'Resolution', 220);
+    local_export_fixed_canvas_png(hfig, png_file, target_size_px, 220);
     plot_manifest(i) = string(png_file);
 
     if save_cfg.close_after_save
@@ -126,3 +142,61 @@ manifest_table.plot_file = plot_manifest;
 writetable(manifest_table, fullfile(save_cfg.save_dir, 'plot_manifest.csv'));
 
 fprintf('Saved %d top-window plots to:\n  %s\n', height(top_windows), save_cfg.save_dir);
+
+
+function target_size_px = local_get_reference_export_size(save_cfg)
+target_size_px = save_cfg.fallback_size_px;
+
+reference_png = local_find_reference_png(save_cfg.reference_dir);
+if ~isempty(reference_png)
+    info = imfinfo(reference_png);
+    target_size_px = [double(info.Width), double(info.Height)];
+end
+end
+
+
+function reference_png = local_find_reference_png(reference_dir)
+reference_png = '';
+if exist(reference_dir, 'dir') ~= 7
+    return;
+end
+
+L = dir(fullfile(reference_dir, '*_ref.png'));
+if isempty(L)
+    return;
+end
+
+L = sortrows(struct2table(L), {'datenum', 'name'}, {'descend', 'ascend'});
+reference_png = fullfile(L.folder{1}, L.name{1});
+end
+
+
+function local_validate_e10gb1_diversity_result(W, window_result_file)
+if ~isfield(W, 'window_mode') || ~strcmpi(char(string(W.window_mode)), 'global')
+    error(['%s is not a global-window diversity result. ', ...
+        'Use the canonical 6000-sample global-window file for e10gb1.'], window_result_file);
+end
+
+if ~isfield(W, 'window_length_samples') || double(W.window_length_samples) ~= 6000
+    error(['%s does not use 6000-sample windows. ', ...
+        'Use the canonical 6000-sample global-window file for e10gb1.'], window_result_file);
+end
+
+required_vars = {'global_window_idx', 'start_session_id', 'end_session_id'};
+for i = 1:numel(required_vars)
+    if ~ismember(required_vars{i}, W.top_windows_table.Properties.VariableNames)
+        error('Top-window table in %s is missing required column "%s".', ...
+            window_result_file, required_vars{i});
+    end
+end
+end
+
+
+function local_export_fixed_canvas_png(hfig, png_file, target_size_px, resolution)
+paper_size_in = target_size_px ./ resolution;
+set(hfig, 'PaperUnits', 'inches');
+set(hfig, 'PaperPositionMode', 'manual');
+set(hfig, 'PaperPosition', [0, 0, paper_size_in(1), paper_size_in(2)]);
+set(hfig, 'PaperSize', paper_size_in);
+print(hfig, png_file, '-dpng', sprintf('-r%d', resolution));
+end

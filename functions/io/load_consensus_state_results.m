@@ -2,7 +2,7 @@ function [C, source_consensus_file] = load_consensus_state_results(cfg, output_r
 % Load saved consensus-state results from a struct or file.
 
 if nargin < 2 || isempty(output_root)
-    output_root = 'D:\DataPons_processed\';
+    output_root = get_project_processed_root();
 end
 
 if nargin < 3

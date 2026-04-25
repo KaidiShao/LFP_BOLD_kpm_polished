@@ -1,0 +1,185 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1100" viewBox="0 0 1800 1100">
+  <defs>
+    <style>
+      .title { font: 700 38px "Segoe UI", Arial, sans-serif; fill: #172033; }
+      .subtitle { font: 400 20px "Segoe UI", Arial, sans-serif; fill: #526070; }
+      .lane-title { font: 700 22px "Segoe UI", Arial, sans-serif; fill: #172033; }
+      .stage-title { font: 700 20px "Segoe UI", Arial, sans-serif; fill: #172033; }
+      .box-title { font: 700 20px "Segoe UI", Arial, sans-serif; fill: #172033; }
+      .box-text { font: 400 16px "Segoe UI", Arial, sans-serif; fill: #44515f; }
+      .note-text { font: 400 15px "Segoe UI", Arial, sans-serif; fill: #556270; }
+      .small-text { font: 400 14px "Segoe UI", Arial, sans-serif; fill: #556270; }
+      .pill-text { font: 700 13px "Segoe UI", Arial, sans-serif; fill: #ffffff; letter-spacing: .3px; }
+      .box { stroke-width: 2.2; rx: 18; ry: 18; }
+      .soft-shadow { filter: url(#shadow); }
+      .arrow { fill: none; stroke: #5d6f80; stroke-width: 3.2; marker-end: url(#arrowhead); }
+      .arrow-light { fill: none; stroke: #8b9aaa; stroke-width: 2.4; marker-end: url(#arrowheadLight); }
+      .arrow-dashed { fill: none; stroke: #8b9aaa; stroke-width: 2.4; stroke-dasharray: 7 7; marker-end: url(#arrowheadLight); }
+    </style>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#1f2a37" flood-opacity="0.13"/>
+    </filter>
+    <marker id="arrowhead" markerWidth="14" markerHeight="10" refX="12" refY="5" orient="auto">
+      <path d="M 0 0 L 14 5 L 0 10 z" fill="#5d6f80"/>
+    </marker>
+    <marker id="arrowheadLight" markerWidth="12" markerHeight="9" refX="10" refY="4.5" orient="auto">
+      <path d="M 0 0 L 12 4.5 L 0 9 z" fill="#8b9aaa"/>
+    </marker>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#f8fbfd"/>
+      <stop offset="100%" stop-color="#eef4f7"/>
+    </linearGradient>
+    <linearGradient id="rawGrad" x1="0" x2="1">
+      <stop offset="0%" stop-color="#fff7ed"/>
+      <stop offset="100%" stop-color="#ffedd5"/>
+    </linearGradient>
+    <linearGradient id="preGrad" x1="0" x2="1">
+      <stop offset="0%" stop-color="#ecfeff"/>
+      <stop offset="100%" stop-color="#cffafe"/>
+    </linearGradient>
+    <linearGradient id="rkGrad" x1="0" x2="1">
+      <stop offset="0%" stop-color="#eef2ff"/>
+      <stop offset="100%" stop-color="#e0e7ff"/>
+    </linearGradient>
+    <linearGradient id="postGrad" x1="0" x2="1">
+      <stop offset="0%" stop-color="#f0fdf4"/>
+      <stop offset="100%" stop-color="#dcfce7"/>
+    </linearGradient>
+    <linearGradient id="xGrad" x1="0" x2="1">
+      <stop offset="0%" stop-color="#fff1f2"/>
+      <stop offset="100%" stop-color="#ffe4e6"/>
+    </linearGradient>
+    <linearGradient id="qGrad" x1="0" x2="1">
+      <stop offset="0%" stop-color="#fdf4ff"/>
+      <stop offset="100%" stop-color="#fae8ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1800" height="1100" fill="url(#bg)"/>
+
+  <text x="80" y="78" class="title">BLP-BOLD ResKoopNet Analysis Framework</text>
+  <text x="80" y="112" class="subtitle">From raw neural and BOLD recordings to Koopman dynamics, within-modality interpretation, and cross-modal coupling</text>
+
+  <rect x="80" y="150" width="260" height="70" rx="20" fill="#172033"/>
+  <text x="110" y="179" class="pill-text">DATASETS</text>
+  <text x="110" y="205" class="small-text" fill="#ffffff">E10gb1  E10fV1  E10gH1  F12m01</text>
+
+  <rect x="420" y="145" width="280" height="82" rx="24" fill="#ffffff" stroke="#d6dee7" stroke-width="2"/>
+  <text x="455" y="176" class="stage-title">Preprocessing</text>
+  <text x="455" y="203" class="small-text">Construct model inputs and labels</text>
+
+  <rect x="760" y="145" width="280" height="82" rx="24" fill="#ffffff" stroke="#d6dee7" stroke-width="2"/>
+  <text x="795" y="176" class="stage-title">ResKoopNet</text>
+  <text x="795" y="203" class="small-text">Learn Koopman eigenfunctions</text>
+
+  <rect x="1100" y="145" width="280" height="82" rx="24" fill="#ffffff" stroke="#d6dee7" stroke-width="2"/>
+  <text x="1135" y="176" class="stage-title">Postprocessing</text>
+  <text x="1135" y="203" class="small-text">Interpret learned dynamics</text>
+
+  <rect x="1440" y="145" width="280" height="82" rx="24" fill="#ffffff" stroke="#d6dee7" stroke-width="2"/>
+  <text x="1475" y="176" class="stage-title">Readouts</text>
+  <text x="1475" y="203" class="small-text">Biological interpretation</text>
+
+  <path d="M340 185 H415" class="arrow-light"/>
+  <path d="M700 185 H755" class="arrow-light"/>
+  <path d="M1040 185 H1095" class="arrow-light"/>
+  <path d="M1380 185 H1435" class="arrow-light"/>
+
+  <rect x="65" y="265" width="1670" height="310" rx="30" fill="#ffffff" stroke="#d8e0e8" stroke-width="2"/>
+  <rect x="90" y="290" width="125" height="40" rx="20" fill="#2563eb"/>
+  <text x="118" y="316" class="pill-text">BLP LANE</text>
+
+  <rect x="90" y="360" width="240" height="120" class="box soft-shadow" fill="url(#rawGrad)" stroke="#fb923c"/>
+  <text x="120" y="398" class="box-title">Raw BLP</text>
+  <text x="120" y="427" class="box-text">Selected sessions</text>
+  <text x="120" y="452" class="box-text">Channels and dx metadata</text>
+
+  <rect x="400" y="315" width="260" height="105" class="box soft-shadow" fill="url(#preGrad)" stroke="#06b6d4"/>
+  <text x="430" y="352" class="box-title">Spectrograms</text>
+  <text x="430" y="381" class="box-text">Region-mean abs</text>
+  <text x="430" y="405" class="box-text">Region-mean complex</text>
+
+  <rect x="400" y="455" width="260" height="105" class="box soft-shadow" fill="url(#preGrad)" stroke="#06b6d4"/>
+  <text x="430" y="492" class="box-title">Events and States</text>
+  <text x="430" y="521" class="box-text">Bandpass events, density</text>
+  <text x="430" y="545" class="box-text">Consensus states, diversity</text>
+
+  <rect x="730" y="315" width="270" height="105" class="box soft-shadow" fill="url(#rkGrad)" stroke="#6366f1"/>
+  <text x="760" y="352" class="box-title">BLP MLP ResKoopNet</text>
+  <text x="760" y="381" class="box-text">abs / complex_split</text>
+  <text x="760" y="405" class="box-text">projected_kv / projected_vlambda</text>
+
+  <rect x="730" y="455" width="270" height="105" class="box soft-shadow" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="8 6"/>
+  <text x="760" y="492" class="box-title">BLP CNN ResKoopNet</text>
+  <text x="760" y="521" class="box-text">Optional comparison branch</text>
+  <text x="760" y="545" class="box-text">Local spectrogram structure</text>
+
+  <rect x="1070" y="315" width="280" height="105" class="box soft-shadow" fill="url(#postGrad)" stroke="#22c55e"/>
+  <text x="1100" y="352" class="box-title">BLP Interpretation</text>
+  <text x="1100" y="381" class="box-text">Top state-diversity windows</text>
+  <text x="1100" y="405" class="box-text">Eigenfunction DR, spike corr</text>
+
+  <rect x="1420" y="315" width="260" height="105" class="box soft-shadow" fill="url(#qGrad)" stroke="#d946ef"/>
+  <text x="1450" y="352" class="box-title">BLP Readouts</text>
+  <text x="1450" y="381" class="box-text">State organization</text>
+  <text x="1450" y="405" class="box-text">Spike-residual alignment</text>
+
+  <path d="M330 420 H395" class="arrow"/>
+  <path d="M330 420 C360 420 365 508 395 508" class="arrow-light"/>
+  <path d="M660 368 H725" class="arrow"/>
+  <path d="M660 390 C695 390 695 508 725 508" class="arrow-dashed"/>
+  <path d="M1000 368 H1065" class="arrow"/>
+  <path d="M1000 508 C1035 508 1035 400 1065 400" class="arrow-dashed"/>
+  <path d="M1350 368 H1415" class="arrow"/>
+
+  <rect x="65" y="615" width="1670" height="255" rx="30" fill="#ffffff" stroke="#d8e0e8" stroke-width="2"/>
+  <rect x="90" y="640" width="145" height="40" rx="20" fill="#0f766e"/>
+  <text x="116" y="666" class="pill-text">BOLD LANE</text>
+
+  <rect x="90" y="705" width="240" height="110" class="box soft-shadow" fill="url(#rawGrad)" stroke="#fb923c"/>
+  <text x="120" y="742" class="box-title">Raw BOLD</text>
+  <text x="120" y="771" class="box-text">ROI time series</text>
+  <text x="120" y="795" class="box-text">TR/session metadata</text>
+
+  <rect x="400" y="690" width="270" height="140" class="box soft-shadow" fill="url(#preGrad)" stroke="#06b6d4"/>
+  <text x="430" y="728" class="box-title">BOLD Observables</text>
+  <text x="430" y="757" class="box-text">roi_mean, eleHP, HP</text>
+  <text x="430" y="781" class="box-text">svd, HP_svd100</text>
+  <text x="430" y="805" class="box-text">global_svd100, slow_band_power</text>
+
+  <rect x="735" y="705" width="280" height="110" class="box soft-shadow" fill="url(#rkGrad)" stroke="#6366f1"/>
+  <text x="765" y="742" class="box-title">BOLD MLP ResKoopNet</text>
+  <text x="765" y="771" class="box-text">7 observable modes</text>
+  <text x="765" y="795" class="box-text">projected_kv / projected_vlambda</text>
+
+  <rect x="1070" y="690" width="300" height="140" class="box soft-shadow" fill="url(#postGrad)" stroke="#22c55e"/>
+  <text x="1100" y="728" class="box-title">BOLD Postprocessing</text>
+  <text x="1100" y="757" class="box-text">Eigenfunction postprocess</text>
+  <text x="1100" y="781" class="box-text">Deconvolved eigenfunctions</text>
+  <text x="1100" y="805" class="box-text">Timescales and activation maps</text>
+
+  <rect x="1420" y="705" width="260" height="110" class="box soft-shadow" fill="url(#qGrad)" stroke="#d946ef"/>
+  <text x="1450" y="742" class="box-title">BOLD Readouts</text>
+  <text x="1450" y="771" class="box-text">Spatial mode maps</text>
+  <text x="1450" y="795" class="box-text">BOLD dynamic timescales</text>
+
+  <path d="M330 760 H395" class="arrow"/>
+  <path d="M670 760 H730" class="arrow"/>
+  <path d="M1015 760 H1065" class="arrow"/>
+  <path d="M1370 760 H1415" class="arrow"/>
+
+  <rect x="250" y="915" width="1300" height="135" rx="30" fill="url(#xGrad)" stroke="#fb7185" stroke-width="2.4"/>
+  <text x="300" y="955" class="lane-title">Cross-Modal BLP-BOLD Coupling</text>
+  <text x="300" y="990" class="box-text">Session-aware lagged cross-correlation: BOLD eigenfunctions / deconvolved eigenfunctions vs BLP event or state-density signals</text>
+  <text x="300" y="1020" class="box-text">Key interpretation: positive lag means BLP density leads BOLD dynamics</text>
+
+  <path d="M1550 420 C1550 620 1380 820 1180 915" class="arrow-light"/>
+  <path d="M530 560 C530 700 620 850 790 935" class="arrow-light"/>
+  <path d="M1220 830 C1220 875 1120 900 1015 915" class="arrow-light"/>
+  <path d="M1550 915 C1550 875 1550 850 1550 820" class="arrow-light"/>
+
+  <rect x="70" y="925" width="130" height="38" rx="19" fill="#fb7185"/>
+  <text x="93" y="950" class="pill-text">FINAL STEP</text>
+
+  <text x="80" y="1070" class="note-text">Meeting framing: first freeze the framework, then decide primary conditions vs robustness branches.</text>
+</svg>

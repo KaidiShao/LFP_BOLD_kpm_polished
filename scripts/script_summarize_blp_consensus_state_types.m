@@ -2,7 +2,7 @@ close all force;
 
 cfg = cfg_F12m01();
 
-output_root = 'D:\DataPons_processed\';
+output_root = get_project_processed_root();
 consensus_input = [];
 [C, source_consensus_file] = load_consensus_state_results(cfg, output_root, consensus_input);
 

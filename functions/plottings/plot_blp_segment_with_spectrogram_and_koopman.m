@@ -523,25 +523,7 @@ end
 
 
 function t = local_build_global_time_axis(session_lengths, session_dx)
-n_sessions = numel(session_lengths);
-t_cells = cell(n_sessions, 1);
-
-for k = 1:n_sessions
-    n = double(session_lengths(k));
-    dx = double(session_dx(k));
-    t_local = (0:n-1) * dx;
-
-    if k == 1
-        t_global = t_local;
-    else
-        t_prev = t_cells{k-1};
-        t_global = t_local + t_prev(end) + dx;
-    end
-    t_cells{k} = t_global;
-end
-
-t = cat(2, t_cells{:});
-t = double(t(:));
+t = build_global_time_axis_from_sessions(session_lengths, session_dx);
 end
 
 

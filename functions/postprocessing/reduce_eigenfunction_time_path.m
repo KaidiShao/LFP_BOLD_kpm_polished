@@ -102,6 +102,10 @@ switch lower(cfg.method)
         domain_name = 'feature';
 
     case 'nmf2'
+        warning(['NMF2 is kept only for backward compatibility and is hidden ', ...
+            'from the default config. Prefer method ''NMF'' unless you explicitly ', ...
+            'need the external meta_nmf implementation.']);
+
         if exist('meta_nmf', 'file') ~= 2
             error(['meta_nmf was not found on the MATLAB path. ', ...
                 'Add it before using method ''NMF2''.']);

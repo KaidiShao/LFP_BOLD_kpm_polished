@@ -37,6 +37,7 @@ t_spec = [];
 f_spec = [];
 regions = {};
 spec_file = plot_data.spec_file;
+spec_global_clim = [];
 
 if plot_data.include_spectrogram
     freqs = double(plot_data.spec_freqs(:));
@@ -50,6 +51,10 @@ if plot_data.include_spectrogram
     spec_seg = double(M.tmpall_mean_abs(freq_idx, raw_idx, :));
     t_spec = double(t_seg(:).');
     f_spec = double(freqs(freq_idx));
+
+    if isfield(plot_data, 'spec_global_clim')
+        spec_global_clim = plot_data.spec_global_clim;
+    end
 end
 
 plot_settings = plot_data.plot_settings;
@@ -153,6 +158,7 @@ base_plot_cache.spec_seg = spec_seg;
 base_plot_cache.t_spec = t_spec;
 base_plot_cache.f_spec = f_spec;
 base_plot_cache.freq_lim = freq_lim;
+base_plot_cache.spec_global_clim = spec_global_clim;
 
 base_plot_cache.n_channels = n_channels;
 base_plot_cache.x_disp = x_disp;

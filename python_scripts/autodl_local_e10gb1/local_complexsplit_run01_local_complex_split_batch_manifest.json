@@ -1,0 +1,40 @@
+{
+  "experiment_name": "local_complexsplit_run01",
+  "dataset_stems": [
+    "e10gb1",
+    "e10fV1",
+    "e10gh1"
+  ],
+  "residual_forms": [
+    "projected_kv",
+    "projected_vlambda"
+  ],
+  "observable_mode": "complex_split",
+  "epochs": 60,
+  "run_script": "/mnt/d/Onedrive/ICPBR/Alberta/koopman_events/LFP_BOLD_kpm_polished/python_scripts/autodl/run_autodl_reskoopnet_mlp.py",
+  "local_solver_root": "/mnt/d/Onedrive/ICPBR/Alberta/koopman_events/LFP_BOLD_kpm_polished/python_scripts/autodl_local_e10gb1",
+  "started_at_unix": 1776519683.4573348,
+  "runs": [
+    {
+      "dataset_stem": "e10gb1",
+      "residual_form": "projected_kv",
+      "return_code": 0,
+      "duration_sec": 23389.60432100296,
+      "results_root": "/mnt/e/autodl_results/e10gb1/mlp"
+    },
+    {
+      "dataset_stem": "e10gb1",
+      "residual_form": "projected_vlambda",
+      "return_code": 0,
+      "duration_sec": 24041.9119451046,
+      "results_root": "/mnt/e/autodl_results/e10gb1/mlp"
+    },
+    {
+      "dataset_stem": "e10fV1",
+      "residual_form": "projected_kv",
+      "return_code": 1,
+      "duration_sec": 27829.783400058746,
+      "results_root": "/mnt/e/autodl_results/e10fV1/mlp"
+    }
+  ]
+}

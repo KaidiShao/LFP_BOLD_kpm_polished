@@ -9,7 +9,7 @@ cfg.plot.between_gap = 2.2;
 cfg.plot.trace_linewidth = 0.4;
 cfg.plot.event_linewidth = 1.1;
 
-output_root = 'D:\DataPons_processed\';
+output_root = get_project_processed_root();
 time_range_sec = [200, 210];
 band_colors = [ ...
     0.0000, 0.4470, 0.7410; ...

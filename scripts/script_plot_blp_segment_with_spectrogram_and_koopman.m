@@ -1,7 +1,7 @@
 this_script_dir = fileparts(mfilename('fullpath'));
 repo_root = fileparts(this_script_dir);
-results_root = get_project_results_root(repo_root);
 addpath(genpath(repo_root));
+results_root = get_project_results_root(repo_root);
 
 othercolor_root = 'D:\Onedrive\util_functions\othercolor\';
 if exist(othercolor_root, 'dir') == 7
@@ -20,7 +20,7 @@ cfg.plot.within_gap = 1.4;
 cfg.plot.between_gap = 2.2;
 cfg.plot.trace_linewidth = 0.4;
 
-output_root = 'D:\DataPons_processed\';
+output_root = get_project_processed_root();
 time_range_sec = [300, 320];
 freq_range_to_plot = [0, 250];
 color_limits = [];
@@ -69,9 +69,9 @@ save_cfg = struct();
 save_cfg.do_save = false;
 save_cfg.save_dir = fullfile(results_root, 'blp_segment_with_spectrogram_and_koopman');
 
-% [EDMD_outputs, ~, source_info] = local_load_edmd_source(source_cfg);
-% fprintf('Loaded EDMD source mode: %s\n', source_info.mode);
-% fprintf('EDMD source path:\n  %s\n', source_info.path);
+[EDMD_outputs, ~, source_info] = load_edmd_source(source_cfg);
+fprintf('Loaded EDMD source mode: %s\n', source_info.mode);
+fprintf('EDMD source path:\n  %s\n', source_info.path);
 fprintf('Loaded %d time samples and %d modes before sorting.\n', ...
     size(EDMD_outputs.efuns, 1), size(EDMD_outputs.efuns, 2));
 
@@ -136,53 +136,6 @@ for i_feature = 1:numel(feature_list)
 end
 
 disp('Plot info available in workspace variable plot_info with fields plot_info.abs and plot_info.real.');
-
-
-function [EDMD_outputs, concat_info, source_info] = local_load_edmd_source(source_cfg)
-switch lower(source_cfg.mode)
-    case 'chunk_dir'
-        [EDMD_outputs, concat_info] = load_and_concat_edmd_output_chunks( ...
-            source_cfg.data_dir, source_cfg.concat);
-        source_info = struct('mode', 'chunk_dir', 'path', source_cfg.data_dir);
-
-    case 'mat_file'
-        edmd_file = source_cfg.edmd_file;
-        if isempty(edmd_file)
-            edmd_file = local_find_default_edmd_file(source_cfg.data_dir);
-        end
-
-        S = load(edmd_file);
-        if ~isfield(S, 'EDMD_outputs')
-            error('File %s does not contain variable EDMD_outputs.', edmd_file);
-        end
-
-        EDMD_outputs = S.EDMD_outputs;
-        if isfield(S, 'concat_info')
-            concat_info = S.concat_info;
-        else
-            concat_info = [];
-        end
-        source_info = struct('mode', 'mat_file', 'path', edmd_file);
-
-    otherwise
-        error('Unknown source_cfg.mode = %s. Use ''chunk_dir'' or ''mat_file''.', source_cfg.mode);
-end
-end
-
-
-function edmd_file = local_find_default_edmd_file(data_dir)
-patterns = {'*_concat.mat', '*_outputs_*_to_*_concat.mat'};
-
-for i = 1:numel(patterns)
-    L = dir(fullfile(data_dir, patterns{i}));
-    if ~isempty(L)
-        edmd_file = fullfile(L(1).folder, L(1).name);
-        return;
-    end
-end
-
-error('No default concatenated EDMD file was found in %s.', data_dir);
-end
 
 
 function s = local_filename_safe(s)

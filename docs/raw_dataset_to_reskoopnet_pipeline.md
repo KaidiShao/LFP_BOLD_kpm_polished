@@ -112,14 +112,14 @@ Notes:
 For smaller datasets, use:
 
 ```matlab
-output_root = 'D:\DataPons_processed\';
+output_root = get_project_processed_root();
 S = compute_blp_region_spectrograms(D, cfg, output_root);
 ```
 
 For larger datasets that may run out of RAM, use:
 
 ```matlab
-output_root = 'E:\DataPons_processed\';
+output_root = get_project_processed_root();
 
 spec_opts = struct();
 spec_opts.save_precision = 'single';
@@ -218,7 +218,7 @@ cfg = cfg_E10gb1();
 cfg.spectrogram.pad_sec = 20;
 cfg.spectrogram.pad_mode = 'mirror';
 
-output_root = 'E:\DataPons_processed\';
+output_root = get_project_processed_root();
 
 D = load_blp_dataset(cfg);
 
@@ -262,4 +262,3 @@ If you prefer wrappers instead of calling functions manually:
 - if session sampling periods differ slightly, preprocessing may still finish,
   but downstream event analyses should be checked more carefully
 - for large datasets, `compute_blp_region_spectrograms_streamed` is the safer default
-

@@ -5,7 +5,7 @@ function cfg = cfg_F12m01()
 
 %% basic info
 cfg.dataset_id = 'F12.m01';
-cfg.raw_data_root = 'D:\DataPons\F12.m01\';
+cfg.raw_data_root = 'E:\DataPons\F12.m01\';
 cfg.data_subfolder = 'blp';
 cfg.file_stem = 'f12m01';
 

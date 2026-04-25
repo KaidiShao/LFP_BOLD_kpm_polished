@@ -2,7 +2,7 @@ function plot_data = prepare_blp_plot_data(cfg, output_root, prep_cfg)
 %PREPARE_BLP_PLOT_DATA Load reusable data once for BLP plotting scripts.
 
 if nargin < 2 || isempty(output_root)
-    output_root = 'D:\DataPons_processed\';
+    output_root = get_project_processed_root();
 end
 
 if nargin < 3
@@ -56,6 +56,7 @@ end
 spec_file = '';
 spec_freqs = [];
 spec_regions = {};
+spec_global_clim = [];
 if prep_cfg.include_spectrogram
     pad_sec = 20;
     pad_mode = 'mirror';
@@ -73,6 +74,7 @@ if prep_cfg.include_spectrogram
     meta = load(spec_file, 'freqs', 'regions');
     spec_freqs = double(meta.freqs(:));
     spec_regions = meta.regions;
+    spec_global_clim = local_get_or_compute_global_spectrogram_clim(spec_file, numel(spec_regions));
 end
 
 plot_data = struct();
@@ -98,6 +100,7 @@ plot_data.include_spectrogram = logical(prep_cfg.include_spectrogram);
 plot_data.spec_file = spec_file;
 plot_data.spec_freqs = spec_freqs;
 plot_data.spec_regions = spec_regions;
+plot_data.spec_global_clim = spec_global_clim;
 end
 
 
@@ -175,26 +178,7 @@ end
 
 
 function t = local_build_global_time_axis(session_lengths, session_dx)
-n_sessions = numel(session_lengths);
-t_cells = cell(n_sessions, 1);
-
-for k = 1:n_sessions
-    n = double(session_lengths(k));
-    dx = double(session_dx(k));
-    t_local = (0:n-1) * dx;
-
-    if k == 1
-        t_global = t_local;
-    else
-        t_prev = t_cells{k-1};
-        t_global = t_local + t_prev(end) + dx;
-    end
-
-    t_cells{k} = t_global;
-end
-
-t = cat(2, t_cells{:});
-t = double(t(:));
+t = build_global_time_axis_from_sessions(session_lengths, session_dx);
 end
 
 
@@ -265,4 +249,61 @@ if n_bands <= size(base, 1)
 else
     colors = lines(n_bands);
 end
+end
+
+
+function spec_global_clim = local_get_or_compute_global_spectrogram_clim(spec_file, n_regions)
+cache_file = [spec_file(1:end-4), '_global_clim.mat'];
+
+if exist(cache_file, 'file') == 2
+    S = load(cache_file, 'spec_global_clim');
+    if isfield(S, 'spec_global_clim') && isnumeric(S.spec_global_clim) ...
+            && size(S.spec_global_clim, 2) == 2 && size(S.spec_global_clim, 1) == n_regions
+        spec_global_clim = double(S.spec_global_clim);
+        return;
+    end
+end
+
+M = matfile(spec_file);
+var_info = whos('-file', spec_file, 'tmpall_mean_abs');
+if isempty(var_info)
+    error('tmpall_mean_abs was not found in spectrogram file: %s', spec_file);
+end
+
+sz = var_info.size;
+if numel(sz) ~= 3 || sz(3) ~= n_regions
+    error('Unexpected tmpall_mean_abs size in %s.', spec_file);
+end
+
+chunk_size = 100000;
+spec_global_clim = nan(n_regions, 2);
+
+for r = 1:n_regions
+    region_min = inf;
+    region_max = -inf;
+
+    for idx1 = 1:chunk_size:sz(2)
+        idx2 = min(idx1 + chunk_size - 1, sz(2));
+        block = double(M.tmpall_mean_abs(:, idx1:idx2, r));
+        finite_mask = isfinite(block);
+        if ~any(finite_mask(:))
+            continue;
+        end
+
+        block_vals = block(finite_mask);
+        region_min = min(region_min, min(block_vals));
+        region_max = max(region_max, max(block_vals));
+    end
+
+    if ~isfinite(region_min) || ~isfinite(region_max)
+        region_min = 0;
+        region_max = 1;
+    elseif region_min == region_max
+        region_max = region_min + eps(region_min + 1);
+    end
+
+    spec_global_clim(r, :) = [region_min, region_max];
+end
+
+save(cache_file, 'spec_global_clim', 'spec_file', 'chunk_size', '-v7');
 end

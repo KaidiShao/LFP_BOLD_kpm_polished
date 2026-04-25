@@ -15,7 +15,7 @@ function E = compute_blp_event_density(cfg, output_root, R, params, source_event
 %  Input defaults
 %  =========================
 if nargin < 2 || isempty(output_root)
-    output_root = 'D:\DataPons_processed\';
+    output_root = get_project_processed_root();
 end
 
 if nargin < 3
@@ -42,14 +42,33 @@ end
 if isempty(source_event_file) && isfield(R, 'save_file') && ~isempty(R.save_file)
     source_event_file = R.save_file;
 end
+source_event_file_signature = build_file_signature(source_event_file);
+
+%% =========================
+%  Prepare save path / cache
+%  =========================
+save_dir = fullfile(output_root, cfg.file_stem, 'event_density');
+if exist(save_dir, 'dir') ~= 7
+    mkdir(save_dir);
+end
+
+save_tag = build_save_tag(cfg.file_stem, params.bin_sec);
+save_file = fullfile(save_dir, [save_tag, '.mat']);
+
+if exist(save_file, 'file') == 2 && ~params.force_recompute
+    S = load(save_file);
+    if isfield(S, 'E') && can_reuse_saved_result(S.E, params, source_event_file_signature)
+        E = S.E;
+        return;
+    end
+end
 
 n_bands = size(R.DetectResults, 1);
 n_channels = size(R.DetectResults, 2);
 
 if isfield(R, 'session_lengths') && isfield(R, 'session_dx') && ...
         ~isempty(R.session_lengths) && ~isempty(R.session_dx)
-    t_raw = build_global_time_axis(R.session_lengths, R.session_dx);
-    t_end = t_raw(end) + double(R.session_dx(end));
+    [t_raw, ~, ~, t_end] = build_global_time_axis_from_sessions(R.session_lengths, R.session_dx);
     dx_ref = median(double(R.session_dx(:)));
 else
     [dx_ref, L_total] = infer_dt_and_length(R.DetectResults);
@@ -124,28 +143,12 @@ for b = 1:n_bands
 end
 
 %% =========================
-%  Prepare save path
-%  =========================
-save_dir = fullfile(output_root, cfg.file_stem, 'event_density');
-if exist(save_dir, 'dir') ~= 7
-    mkdir(save_dir);
-end
-
-save_tag = build_save_tag(cfg.file_stem, params.bin_sec);
-save_file = fullfile(save_dir, [save_tag, '.mat']);
-
-if exist(save_file, 'file') == 2 && ~params.force_recompute
-    S = load(save_file);
-    E = S.E;
-    return;
-end
-
-%% =========================
 %  Pack output
 %  =========================
 E = struct();
 E.save_file = save_file;
 E.source_event_file = source_event_file;
+E.source_event_file_signature = source_event_file_signature;
 E.dataset_id = cfg.dataset_id;
 E.file_stem = cfg.file_stem;
 
@@ -219,29 +222,7 @@ end
 
 
 function t = build_global_time_axis(session_lengths, session_dx)
-% Build a global time axis by concatenating sessions in time.
-
-n_sessions = numel(session_lengths);
-t_cells = cell(n_sessions, 1);
-
-for k = 1:n_sessions
-    n = double(session_lengths(k));
-    dx = double(session_dx(k));
-
-    t_local = (0:n-1) * dx;
-
-    if k == 1
-        t_global = t_local;
-    else
-        t_prev = t_cells{k-1};
-        t_global = t_local + t_prev(end) + dx;
-    end
-
-    t_cells{k} = t_global;
-end
-
-t = cat(2, t_cells{:});
-t = double(t(:));
+t = build_global_time_axis_from_sessions(session_lengths, session_dx);
 end
 
 
@@ -313,4 +294,36 @@ function tag = build_save_tag(file_stem, bin_sec)
 
 sec_tag = strrep(sprintf('%gs', bin_sec), '.', 'p');
 tag = sprintf('%s_event_density_%s', file_stem, sec_tag);
+end
+
+
+function tf = can_reuse_saved_result(E, params, source_event_file_signature)
+tf = isstruct(E);
+if ~tf
+    return;
+end
+
+required_fields = {'bin_sec', 'smooth_sigma_sec', 'source_event_file_signature'};
+for i = 1:numel(required_fields)
+    if ~isfield(E, required_fields{i}) || isempty(E.(required_fields{i}))
+        tf = false;
+        return;
+    end
+end
+
+tf = double(E.bin_sec) == double(params.bin_sec) && ...
+    double(E.smooth_sigma_sec) == double(params.smooth_sigma_sec);
+if ~tf
+    return;
+end
+
+if ~isfield(source_event_file_signature, 'source_ref') || ...
+        isempty(source_event_file_signature.source_ref) || ...
+        ~isfield(source_event_file_signature, 'exists') || ...
+        ~logical(source_event_file_signature.exists)
+    tf = false;
+    return;
+end
+
+tf = file_signature_matches(E.source_event_file_signature, source_event_file_signature);
 end

@@ -24,7 +24,7 @@ function S = compute_blp_region_spectrograms_streamed(D, cfg, output_root, opts)
 %  Defaults
 %  =========================
 if nargin < 3 || isempty(output_root)
-    output_root = 'D:\DataPons_processed\';
+    output_root = get_project_processed_root();
 end
 
 if nargin < 4
@@ -159,7 +159,7 @@ for k = 1:n_sessions
     sid = D.session_ids(k);
     idx1 = D.session_start_idx(k);
     idx2 = D.session_end_idx(k);
-    x = D.data(idx1:idx2, :);   % time x channel
+    x = read_blp_data_slice(D, idx1:idx2);   % time x channel
 
     dx = D.session_dx(k);
     Fs_session = 1 / dx;
@@ -267,28 +267,7 @@ session_end_idx = cumsum(session_lengths);
 session_start_idx = [1; session_end_idx(1:end-1) + 1];
 border_idx = session_end_idx(1:end-1);
 
-timesout_cells = cell(n_sessions, 1);
-
-for k = 1:n_sessions
-    t = session_timesout{k};
-
-    if isempty(t)
-        timesout_cells{k} = t;
-        continue;
-    end
-
-    if k == 1
-        t_global = t;
-    else
-        t_prev = timesout_cells{k-1};
-        dt_spec = D.session_dx(k);
-        t_global = t + t_prev(end) + dt_spec;
-    end
-
-    timesout_cells{k} = t_global;
-end
-
-timesout = cat(2, timesout_cells{:});
+timesout = build_global_time_axis_from_sessions(session_lengths, D.session_dx);
 
 session_ids = D.session_ids;
 session_raw_lengths = D.session_lengths;

@@ -1,3 +1,7 @@
+% Dataset-specific wrapper currently fixed to f12m01.
+% For the canonical e10gb1 diversity plotting workflow, use:
+%   script_plot_top_consensus_event_diversity_windows_e10gb1.m
+
 this_script_dir = fileparts(mfilename('fullpath'));
 repo_root = fileparts(this_script_dir);
 results_root = get_project_results_root(repo_root);
@@ -19,7 +23,7 @@ cfg.plot.within_gap = 1.4;
 cfg.plot.between_gap = 2.2;
 cfg.plot.trace_linewidth = 0.4;
 
-output_root = 'D:\DataPons_processed\';
+output_root = get_project_processed_root();
 window_result_file = fullfile(output_root, cfg.file_stem, 'event_diversity_windows', ...
     [cfg.file_stem, '_event_diversity_windows_5000samp.mat']);
 

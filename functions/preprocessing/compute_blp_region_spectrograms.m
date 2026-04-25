@@ -20,7 +20,7 @@ function S = compute_blp_region_spectrograms(D, cfg, output_root)
 %  Basic settings
 %  =========================
 if nargin < 3 || isempty(output_root)
-    output_root = 'D:\DataPons_processed\';
+    output_root = get_project_processed_root();
 end
 
 freq_range = [0.1, 250];
@@ -128,7 +128,7 @@ for k = 1:n_sessions
     % Extract the current session from concatenated raw data
     idx1 = D.session_start_idx(k);
     idx2 = D.session_end_idx(k);
-    x = D.data(idx1:idx2, :);   % time x channel
+    x = read_blp_data_slice(D, idx1:idx2);   % time x channel
 
     dx = D.session_dx(k);
     Fs_session = 1 / dx;
@@ -263,28 +263,7 @@ border_idx = session_end_idx(1:end-1);
 %% =========================
 %  Build global time axis
 %  =========================
-timesout_cells = cell(n_sessions, 1);
-
-for k = 1:n_sessions
-    t = session_timesout{k};
-
-    if isempty(t)
-        timesout_cells{k} = t;
-        continue;
-    end
-
-    if k == 1
-        t_global = t;
-    else
-        t_prev = timesout_cells{k-1};
-        dt_spec = D.session_dx(k);
-        t_global = t + t_prev(end) + dt_spec;
-    end
-
-    timesout_cells{k} = t_global;
-end
-
-timesout = cat(2, timesout_cells{:});
+timesout = build_global_time_axis_from_sessions(session_lengths, D.session_dx);
 
 %% =========================
 %  Collect metadata

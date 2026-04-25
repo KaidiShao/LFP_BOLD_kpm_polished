@@ -174,7 +174,8 @@ switch lower(cfg.method)
         X_mode_by_time = F_time_by_mode(1:step:end, :).';
         Z = run_umap(X_mode_by_time, ...
             'metric', 'correlation', ...
-            'n_components', output_dim);
+            'n_components', output_dim, ...
+            'verbose', 'none');
 
     case 'tsne'
         step = max(1, cfg.downsample_step);
