@@ -529,17 +529,57 @@ if isfield(Obs, 'cfg') && isfield(Obs.cfg, 'bold') && ...
         isfield(Obs.cfg.bold, 'selected_region_names')
     target_region_names = cellstr(string(Obs.cfg.bold.selected_region_names(:)).');
 end
-if isempty(target_region_names) && isfield(Obs, 'params') && ...
-        isfield(Obs.params, 'observable_branch')
-    branch = lower(char(string(Obs.params.observable_branch)));
-    switch branch
-        case {'hp', 'hp_svd100'}
-            target_region_names = {'HP'};
-        case {'elehp'}
-            target_region_names = {'eleHP'};
-        case {'global_svd100', 'svd', 'roi_mean', 'slow_band_power'}
-            target_region_names = {};
+if isempty(target_region_names)
+    target_region_names = local_region_names_from_observable_metadata(Obs);
+end
+end
+
+function target_region_names = local_region_names_from_observable_metadata(Obs)
+target_region_names = {};
+
+obs_info = [];
+if isfield(Obs, 'observable_info') && istable(Obs.observable_info)
+    obs_info = Obs.observable_info;
+elseif isfield(Obs, 'obs_info') && istable(Obs.obs_info)
+    obs_info = Obs.obs_info;
+end
+
+if ~isempty(obs_info) && ismember('region_label', obs_info.Properties.VariableNames)
+    labels = cellstr(string(obs_info.region_label(:)));
+    labels = labels(~cellfun(@isempty, labels));
+    if ~isempty(labels)
+        target_region_names = unique(labels, 'stable');
+        return;
     end
+end
+
+if isfield(Obs, 'model') && isstruct(Obs.model) && ...
+        isfield(Obs.model, 'input_variable_labels') && ~isempty(Obs.model.input_variable_labels)
+    target_region_names = local_infer_region_names_from_variable_labels(Obs.model.input_variable_labels);
+end
+end
+
+function target_region_names = local_infer_region_names_from_variable_labels(variable_labels)
+labels = cellstr(string(variable_labels(:)));
+region_names = cell(size(labels));
+keep = false(size(labels));
+
+for i = 1:numel(labels)
+    tok = regexp(labels{i}, '^(.*)_v\d+$', 'tokens', 'once');
+    if isempty(tok)
+        tok = regexp(labels{i}, '^(.*)_mean$', 'tokens', 'once');
+    end
+    if isempty(tok) || isempty(tok{1})
+        continue;
+    end
+    region_names{i} = tok{1};
+    keep(i) = true;
+end
+
+if any(keep)
+    target_region_names = unique(region_names(keep), 'stable');
+else
+    target_region_names = {};
 end
 end
 
@@ -582,11 +622,18 @@ end
 
 
 function label = local_roi_label(R, i_region)
-if isfield(R, 'name') && ~isempty(R.name)
-    label = char(string(R.name));
-else
-    label = sprintf('roi%02d', i_region);
+if ~isfield(R, 'name') || isempty(R.name)
+    error('roiTs{1,%d} is missing required ROI label field .name.', i_region);
 end
+if ischar(R.name) || isstring(R.name)
+    label = char(string(R.name));
+    return;
+end
+if iscell(R.name) && numel(R.name) == 1 && (ischar(R.name{1}) || isstring(R.name{1}))
+    label = char(string(R.name{1}));
+    return;
+end
+error('roiTs{1,%d}.name must be a string-like scalar.', i_region);
 end
 
 

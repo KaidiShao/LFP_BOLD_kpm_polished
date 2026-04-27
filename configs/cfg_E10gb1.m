@@ -40,4 +40,12 @@ cfg.sessions(3).include = false;
 cfg.sessions(3).selected_channels = cfg.channels.selected_all;
 cfg.sessions(3).notes = 'vspont'; % spontaneous block collected during the visual-stim protocol
 
+%% BOLD ROI naming
+cfg.bold = struct();
+cfg.bold.data_subfolder = 'roits';
+cfg.bold.input_var = 'roiTs';
+cfg.bold.role_map = struct();
+cfg.bold.role_map.elehp = 'eleHP';
+cfg.bold.role_map.hp = 'HP';
+
 end

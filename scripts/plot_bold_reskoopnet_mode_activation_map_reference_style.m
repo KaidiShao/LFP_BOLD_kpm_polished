@@ -196,11 +196,18 @@ function [coords, region_labels, n_var_region, ana] = local_collect_roi_coords_a
 end
 
 function label = local_roi_label(R, i_region)
-    if isfield(R, 'name') && ~isempty(R.name)
-        label = char(string(R.name));
-    else
-        label = sprintf('roi%02d', i_region);
+    if ~isfield(R, 'name') || isempty(R.name)
+        error('roiTs{1,%d} is missing required ROI label field .name.', i_region);
     end
+    if ischar(R.name) || isstring(R.name)
+        label = char(string(R.name));
+        return;
+    end
+    if iscell(R.name) && numel(R.name) == 1 && (ischar(R.name{1}) || isstring(R.name{1}))
+        label = char(string(R.name{1}));
+        return;
+    end
+    error('roiTs{1,%d}.name must be a string-like scalar.', i_region);
 end
 
 function vals = local_prepare_values(raw_vals, value_mode)

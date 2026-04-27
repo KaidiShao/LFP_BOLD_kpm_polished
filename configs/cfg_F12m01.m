@@ -29,4 +29,12 @@ cfg.sessions(2).session_id = 14:16;
 cfg.sessions(2).include = false;
 cfg.sessions(2).selected_channels = [];
 cfg.sessions(2).notes = 'inconsistent sampling rate (4 slices)';
+
+%% BOLD ROI naming
+cfg.bold = struct();
+cfg.bold.data_subfolder = 'roits';
+cfg.bold.input_var = 'roiTs';
+cfg.bold.role_map = struct();
+cfg.bold.role_map.elehp = 'eleHP';
+cfg.bold.role_map.hp = 'HP';
 end

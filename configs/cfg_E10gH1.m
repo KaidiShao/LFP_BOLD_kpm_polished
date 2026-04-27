@@ -42,4 +42,12 @@ cfg.sessions(4).include = false;
 cfg.sessions(4).selected_channels = cfg.channels.selected_all;
 cfg.sessions(4).notes = 'poor'; % poor neural data & different sampling rate in spike/roiTs
 
+%% BOLD ROI naming
+cfg.bold = struct();
+cfg.bold.data_subfolder = 'roits';
+cfg.bold.input_var = 'roiTs';
+cfg.bold.role_map = struct();
+cfg.bold.role_map.elehp = 'eleHP';
+cfg.bold.role_map.hp = 'HP';
+
 end
