@@ -16,6 +16,17 @@ This document covers the event-analysis line:
 
 This is separate from the ResKoopNet / spectrogram / Koopman postprocessing line, except when later visualization compares them.
 
+Current interpretation of the two downstream window branches:
+
+- `event_diversity_windows` is an early diagnostic / quick-check branch
+- `consensus_state_diversity_windows` is the primary long-term downstream branch
+
+For the primary consensus-state branch, spectrogram generation should be treated
+as plotting support for top-window figures, not as part of the core
+event/state logic. In practice, the canonical plotting path should reuse saved
+spectrogram files when they already exist and should fail immediately if the
+required plotting-support spectrogram is missing.
+
 ## Related Notes
 
 - E10gb1 zscore discussion and current decision:
@@ -117,7 +128,7 @@ Event-line files currently present:
 
 Load raw concatenated BLP:
 
-- `load_blp_dataset(cfg)`
+- `io_raw.load_blp_dataset(cfg)`
 
 This is the only required raw-data input stage for the event line.
 
@@ -142,7 +153,7 @@ global per-channel zscore for event detection, see:
 
 Load saved event result:
 
-- `load_event_results(cfg, output_root, event_input)`
+- `io_results.load_event_results(cfg, output_root, event_input)`
 
 Then run:
 
@@ -156,7 +167,7 @@ Output:
 
 Load saved event result:
 
-- `load_event_results(cfg, output_root, event_input)`
+- `io_results.load_event_results(cfg, output_root, event_input)`
 
 Then run:
 
@@ -175,7 +186,7 @@ Examples:
 
 Load saved consensus-state result:
 
-- `load_consensus_state_results(cfg, output_root, consensus_input)`
+- `io_results.load_consensus_state_results(cfg, output_root, consensus_input)`
 
 Then run:
 
@@ -190,7 +201,7 @@ Outputs:
 
 Load saved consensus-state result:
 
-- `load_consensus_state_results(cfg, output_root, consensus_input)`
+- `io_results.load_consensus_state_results(cfg, output_root, consensus_input)`
 
 Then run:
 
@@ -233,23 +244,21 @@ This should be treated as the preferred consensus-state window-selection line wh
 
 Single-stage scripts:
 
-- `scripts/script_compute_blp_bandpass_events.m`
-- `scripts/script_compute_blp_event_density.m`
-- `scripts/script_compute_blp_consensus_states.m`
-- `scripts/script_summarize_blp_consensus_state_types.m`
-- `scripts/script_analyze_blp_consensus_event_diversity_windows.m`
+- `scripts/script_compute_one_cfg_blp_bandpass_events.m`
+- `scripts/script_compute_one_cfg_blp_event_density.m`
+- `scripts/script_compute_one_cfg_blp_consensus_states.m`
+- `scripts/script_summarize_one_cfg_blp_consensus_state_types.m`
 
-End-to-end event-line runner:
+Canonical quick-check branch entries:
 
-- `scripts/script_run_blp_event_pipeline_to_top_windows.m`
+- `scripts/script_run_one_cfg_to_event_diversity_windows.m`
+- `scripts/script_run_cfgs_to_event_diversity_windows.m`
+- `scripts/script_run_e10gb1_to_event_diversity_windows.m`
 
-Current consensus-state-diversity analysis / plotting entry:
+Fixed-dataset examples:
 
-- `scripts/script_refresh_e10gb1_state_diversity_top_windows_and_ref_figs.m`
-
-Canonical `e10gb1` diversity refresh entry:
-
-- `scripts/script_refresh_e10gb1_diversity_top_windows_and_ref_figs.m`
+- `scripts/script_run_e10gb1_to_consensus_state_top_windows.m`
+- `scripts/script_run_e10gb1_to_event_diversity_windows.m`
 
 ## Current Consistency Check
 
@@ -278,7 +287,7 @@ For `e10gb1`, prefer the `6000samp_globalwin` diversity outputs when comparing t
 
 The codebase now resolves the processed-data root through:
 
-- `get_project_processed_root()`
+- `io_project.get_project_processed_root()`
 
 Current default behavior:
 

@@ -15,7 +15,7 @@ function S = summarize_blp_consensus_state_types(cfg, output_root, C, params, so
 %  Input defaults
 %  =========================
 if nargin < 2 || isempty(output_root)
-    output_root = get_project_processed_root();
+    output_root = io_project.get_project_processed_root();
 end
 
 if nargin < 3
@@ -45,6 +45,29 @@ end
 
 if isempty(source_consensus_file) && isfield(C, 'save_file') && ~isempty(C.save_file)
     source_consensus_file = C.save_file;
+end
+
+%% =========================
+%  Prepare save path / cache
+%  =========================
+save_dir = fullfile(output_root, cfg.file_stem, 'consensus_state_summary');
+if exist(save_dir, 'dir') ~= 7
+    mkdir(save_dir);
+end
+
+save_tag = build_save_tag(cfg.file_stem);
+save_file = fullfile(save_dir, [save_tag, '.mat']);
+csv_file = fullfile(save_dir, [save_tag, '.csv']);
+
+if exist(save_file, 'file') == 2 && ~params.force_recompute
+    L = load(save_file);
+    S = L.S;
+    S.save_file = save_file;
+    S.csv_file = csv_file;
+    if params.save_csv && exist(csv_file, 'file') ~= 2 && isfield(S, 'summary_table')
+        writetable(S.summary_table, csv_file);
+    end
+    return;
 end
 
 state_catalog = C.state_catalog(:);
@@ -150,29 +173,6 @@ summary_table = table( ...
     median_window_duration_sec, ...
     min_window_duration_sec, ...
     max_window_duration_sec);
-
-%% =========================
-%  Prepare save path
-%  =========================
-save_dir = fullfile(output_root, cfg.file_stem, 'consensus_state_summary');
-if exist(save_dir, 'dir') ~= 7
-    mkdir(save_dir);
-end
-
-save_tag = build_save_tag(cfg.file_stem);
-save_file = fullfile(save_dir, [save_tag, '.mat']);
-csv_file = fullfile(save_dir, [save_tag, '.csv']);
-
-if exist(save_file, 'file') == 2 && ~params.force_recompute
-    L = load(save_file);
-    S = L.S;
-    S.save_file = save_file;
-    S.csv_file = csv_file;
-    if params.save_csv && exist(csv_file, 'file') ~= 2 && isfield(S, 'summary_table')
-        writetable(S.summary_table, csv_file);
-    end
-    return;
-end
 
 %% =========================
 %  Pack output

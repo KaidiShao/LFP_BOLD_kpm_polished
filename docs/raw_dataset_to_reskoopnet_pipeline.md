@@ -88,7 +88,7 @@ Important assumptions used later in the pipeline:
 Call:
 
 ```matlab
-D = load_blp_dataset(cfg);
+D = io_raw.load_blp_dataset(cfg);
 ```
 
 Main output fields in `D`:
@@ -109,17 +109,10 @@ Notes:
 
 ## Step 3: Compute Region-Mean Spectrograms
 
-For smaller datasets, use:
+The standard path is the streamed implementation:
 
 ```matlab
-output_root = get_project_processed_root();
-S = compute_blp_region_spectrograms(D, cfg, output_root);
-```
-
-For larger datasets that may run out of RAM, use:
-
-```matlab
-output_root = get_project_processed_root();
+output_root = io_project.get_project_processed_root();
 
 spec_opts = struct();
 spec_opts.save_precision = 'single';
@@ -127,6 +120,14 @@ spec_opts.return_data = false;
 spec_opts.force_recompute = false;
 
 S = compute_blp_region_spectrograms_streamed(D, cfg, output_root, spec_opts);
+```
+
+If you explicitly want the full spectrogram arrays loaded back into memory
+for a small run, the old convenience entry now wraps the streamed path:
+
+```matlab
+output_root = io_project.get_project_processed_root();
+S = compute_blp_region_spectrograms(D, cfg, output_root);
 ```
 
 Recommended spectrogram settings can be placed in the config before this step:
@@ -218,9 +219,9 @@ cfg = cfg_E10gb1();
 cfg.spectrogram.pad_sec = 20;
 cfg.spectrogram.pad_mode = 'mirror';
 
-output_root = get_project_processed_root();
+output_root = io_project.get_project_processed_root();
 
-D = load_blp_dataset(cfg);
+D = io_raw.load_blp_dataset(cfg);
 
 spec_opts = struct();
 spec_opts.save_precision = 'single';

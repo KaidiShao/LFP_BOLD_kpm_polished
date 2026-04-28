@@ -1,8 +1,41 @@
+% Batch BLP dictionary pipeline driver for multiple cfg_*.m definitions.
+%
+% Usage from MATLAB:
+%   cfg_names = {'E10fV1', 'E10gH1'};
+%   run('scripts/script_preprocess_cfgs_to_observables_streamed.m');
+%
+% Optional controls, set before run(...) if needed:
+%   force_recompute = false;
+%   save_precision = 'single';
+%   chunk_size = 200000;
+%   low_full_max_hz = 50;
+%   high_max_hz = 250;
+%   high_group_size = 2;
+%   dict_modes = {'abs', 'complex_split'};
+%   cache_raw_to_disk = false;
+%   load_metadata_only = true;
+%   run_log_file = '';
+%
+% Role:
+%   - batch driver for the BLP dictionary pipeline
+%   - accepts any manually defined cfg_*.m that matches the current BLP
+%     loader contract
+%   - intended for running multiple datasets in one pass
+%
+% For a lighter single-dataset interactive entry, use:
+%   scripts/script_preprocess_one_cfg_to_observables_streamed.m
+
+%% -------------------------
+%  Required user input
+%  -------------------------
 if ~exist('cfg_names', 'var') || isempty(cfg_names)
     error(['Set cfg_names before running this script, for example: ' ...
         'cfg_names = {''E10fV1'', ''E10gH1''};']);
 end
 
+%% -------------------------
+%  Repo and toolboxes
+%  -------------------------
 this_script_dir = fileparts(mfilename('fullpath'));
 repo_root = fileparts(this_script_dir);
 addpath(genpath(repo_root));
@@ -21,6 +54,9 @@ if exist('finputcheck', 'file') ~= 2
         'EEGLAB directory does not provide it: %s'], eeglab_root);
 end
 
+%% -------------------------
+%  User options
+%  -------------------------
 cfg_names = cellstr(string(cfg_names));
 
 if ~exist('force_recompute', 'var') || isempty(force_recompute)
@@ -72,7 +108,10 @@ if ~isempty(run_log_file)
     fclose(fid);
 end
 
-output_root = get_project_processed_root();
+%% -------------------------
+%  Output root and run summary
+%  -------------------------
+output_root = io_project.get_project_processed_root();
 
 local_emit(run_log_file, 'Processed-data root:\n  %s\n', output_root);
 local_emit(run_log_file, 'Datasets to preprocess:\n');
@@ -80,6 +119,9 @@ for i = 1:numel(cfg_names)
     local_emit(run_log_file, '  - %s\n', cfg_names{i});
 end
 
+%% -------------------------
+%  Dataset loop
+%  -------------------------
 for i = 1:numel(cfg_names)
     cfg_name = cfg_names{i};
     cfg_fun = ['cfg_' cfg_name];
@@ -96,15 +138,17 @@ for i = 1:numel(cfg_names)
     local_emit(run_log_file, 'Running streamed preprocessing for %s (%s)\n', cfg_name, cfg.dataset_id);
     local_emit(run_log_file, 'Raw data root:\n  %s\n', cfg.raw_data_root);
 
+    % Step 1. Load raw BLP
     load_opts = struct();
     load_opts.metadata_only = load_metadata_only;
     load_opts.cache_to_disk = cache_raw_to_disk;
     load_opts.force_recompute = force_recompute;
 
-    load_log = evalc('D = load_blp_dataset(cfg, load_opts);');
+    load_log = evalc('D = io_raw.load_blp_dataset(cfg, load_opts);');
     local_append_text(run_log_file, load_log);
     local_emit(run_log_file, 'Loaded concatenated raw data: [%d, %d]\n', D.n_time, numel(D.selected_channels));
 
+    % Step 2. Streamed spectrograms
     spec_opts = struct();
     spec_opts.save_precision = save_precision;
     spec_opts.return_data = false;
@@ -116,6 +160,7 @@ for i = 1:numel(cfg_names)
     local_emit(run_log_file, 'COMPLEX spectrogram file:\n  %s\n', S.complex_file);
     local_emit(run_log_file, 'ABS spectrogram size:\n  [%s]\n', num2str(S.tmpall_mean_abs_size));
 
+    % Step 3. Dictionary modes
     params = struct();
     params.low_full_max_hz = low_full_max_hz;
     params.high_max_hz = high_max_hz;

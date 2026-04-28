@@ -15,7 +15,7 @@ function E = compute_blp_event_density(cfg, output_root, R, params, source_event
 %  Input defaults
 %  =========================
 if nargin < 2 || isempty(output_root)
-    output_root = get_project_processed_root();
+    output_root = io_project.get_project_processed_root();
 end
 
 if nargin < 3
@@ -42,7 +42,7 @@ end
 if isempty(source_event_file) && isfield(R, 'save_file') && ~isempty(R.save_file)
     source_event_file = R.save_file;
 end
-source_event_file_signature = build_file_signature(source_event_file);
+source_event_file_signature = io_utils.build_file_signature(source_event_file);
 
 %% =========================
 %  Prepare save path / cache
@@ -68,7 +68,7 @@ n_channels = size(R.DetectResults, 2);
 
 if isfield(R, 'session_lengths') && isfield(R, 'session_dx') && ...
         ~isempty(R.session_lengths) && ~isempty(R.session_dx)
-    [t_raw, ~, ~, t_end] = build_global_time_axis_from_sessions(R.session_lengths, R.session_dx);
+    [t_raw, ~, ~, t_end] = io_utils.build_global_time_axis_from_sessions(R.session_lengths, R.session_dx);
     dx_ref = median(double(R.session_dx(:)));
 else
     [dx_ref, L_total] = infer_dt_and_length(R.DetectResults);
@@ -110,10 +110,6 @@ for b = 1:n_bands
         S = R.DetectResults{b, c};
 
         if isempty(S) || ~isfield(S, 'loc_peak') || isempty(S.loc_peak)
-            density_by_chan(:, c, b) = 0;
-            smoothed_density_by_chan(:, c, b) = 0;
-            counts_by_chan(:, c, b) = 0;
-            total_event_count(c, b) = 0;
             continue;
         end
 
@@ -121,10 +117,6 @@ for b = 1:n_bands
         loc_peak = loc_peak(loc_peak >= 1 & loc_peak <= numel(t_raw));
 
         if isempty(loc_peak)
-            density_by_chan(:, c, b) = 0;
-            smoothed_density_by_chan(:, c, b) = 0;
-            counts_by_chan(:, c, b) = 0;
-            total_event_count(c, b) = 0;
             continue;
         end
 
@@ -179,20 +171,9 @@ E.density_mean = density_mean;
 E.smoothed_density_mean = smoothed_density_mean;
 E.total_event_count = total_event_count;
 E.params = params;
-
-E.bands = struct([]);
-for b = 1:n_bands
-    E.bands(b).name = band_labels{b};
-    E.bands(b).band_index = b;
-    E.bands(b).t_edges = edges(:);
-    E.bands(b).t_centers = t_centers(:);
-    E.bands(b).counts_by_chan = counts_by_chan(:, :, b);
-    E.bands(b).density_by_chan = density_by_chan(:, :, b);
-    E.bands(b).smoothed_density_by_chan = smoothed_density_by_chan(:, :, b);
-    E.bands(b).density_mean = density_mean(:, b);
-    E.bands(b).smoothed_density_mean = smoothed_density_mean(:, b);
-    E.bands(b).total_event_count = total_event_count(:, b);
-end
+E.bands = build_band_density_summaries( ...
+    band_labels, edges, t_centers, counts_by_chan, density_by_chan, ...
+    smoothed_density_by_chan, density_mean, smoothed_density_mean, total_event_count);
 
 save(save_file, 'E', '-v7.3');
 end
@@ -218,11 +199,6 @@ end
 if ~isscalar(params.smooth_sigma_sec) || params.smooth_sigma_sec < 0
     error('params.smooth_sigma_sec must be a nonnegative scalar.');
 end
-end
-
-
-function t = build_global_time_axis(session_lengths, session_dx)
-t = build_global_time_axis_from_sessions(session_lengths, session_dx);
 end
 
 
@@ -278,6 +254,27 @@ g = g / sum(g);
 end
 
 
+function bands = build_band_density_summaries( ...
+    band_labels, edges, t_centers, counts_by_chan, density_by_chan, ...
+    smoothed_density_by_chan, density_mean, smoothed_density_mean, total_event_count)
+n_bands = numel(band_labels);
+bands = struct([]);
+
+for b = 1:n_bands
+    bands(b).name = band_labels{b};
+    bands(b).band_index = b;
+    bands(b).t_edges = edges(:);
+    bands(b).t_centers = t_centers(:);
+    bands(b).counts_by_chan = counts_by_chan(:, :, b);
+    bands(b).density_by_chan = density_by_chan(:, :, b);
+    bands(b).smoothed_density_by_chan = smoothed_density_by_chan(:, :, b);
+    bands(b).density_mean = density_mean(:, b);
+    bands(b).smoothed_density_mean = smoothed_density_mean(:, b);
+    bands(b).total_event_count = total_event_count(:, b);
+end
+end
+
+
 function value = get_optional_field(S, field_name, default_value)
 % Read an optional struct field with a default fallback.
 
@@ -325,5 +322,5 @@ if ~isfield(source_event_file_signature, 'source_ref') || ...
     return;
 end
 
-tf = file_signature_matches(E.source_event_file_signature, source_event_file_signature);
+tf = io_utils.file_signature_matches(E.source_event_file_signature, source_event_file_signature);
 end

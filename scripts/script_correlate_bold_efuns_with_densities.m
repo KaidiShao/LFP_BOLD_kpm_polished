@@ -19,7 +19,7 @@ set(groot, 'defaultFigureVisible', 'off');
 fprintf('Using compute function:\n  %s\n', which('compute_bold_efun_density_cross_correlation'));
 fprintf('Using plot function:\n  %s\n', which('plot_bold_efun_density_cross_correlation_summary'));
 
-processed_root = get_project_processed_root();
+processed_root = io_project.get_project_processed_root();
 
 dataset_stems = {'e10gb1', 'e10gh1', 'e10fV1', 'f12m01'};
 post_folder_name = 'bold_reskoopnet_postprocessing';

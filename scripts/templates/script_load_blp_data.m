@@ -1,7 +1,7 @@
 addpath(genpath('D:\Onedrive\ICPBR\Alberta\koopman_events\LFP_BOLD_kpm_polished\'))
 
 cfg = cfg_F12m01();
-D = load_blp_dataset(cfg);
+D = io_raw.load_blp_dataset(cfg);
 
 X = D.data;
 session_ids = D.session_ids;

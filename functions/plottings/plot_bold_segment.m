@@ -19,7 +19,7 @@ if ~isfield(params, 'trace_scale') || isempty(params.trace_scale)
 end
 
 X = select_plot_source(D, params.source);
-[t, ~, ~, ~] = build_global_time_axis_from_sessions(D.session_lengths, D.session_dx);
+[t, ~, ~, ~] = io_utils.build_global_time_axis_from_sessions(D.session_lengths, D.session_dx);
 
 idx = find(t >= time_range_sec(1) & t <= time_range_sec(2));
 if isempty(idx)

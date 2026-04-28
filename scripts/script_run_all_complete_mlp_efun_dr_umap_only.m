@@ -20,7 +20,7 @@ efun_batch_override = struct();
 efun_batch_override.method_filter = {'umap'};
 efun_batch_override.sweep_name = 'dr_umap';
 efun_batch_override.master_manifest_file = fullfile( ...
-    get_project_processed_root(), 'efun_mlp_dr_all_umap.csv');
+    io_project.get_project_processed_root(), 'efun_mlp_dr_all_umap.csv');
 
 efun_batch_override.continue_on_error = true;
 efun_batch_override.skip_unavailable_methods = true;

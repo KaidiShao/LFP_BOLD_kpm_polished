@@ -14,7 +14,7 @@ params = struct();
 params.dataset_stems = {'e10fV1', 'e10gb1', 'e10gh1'};
 params.exclude_dataset_stems = {'f12m01'};
 params.autodl_root = 'E:\autodl_results';
-params.processed_root = get_project_processed_root();
+params.processed_root = io_project.get_project_processed_root();
 params.output_folder_name = 'mlp_top_state_diversity_postprocessing';
 
 params.n_top_windows = 30;

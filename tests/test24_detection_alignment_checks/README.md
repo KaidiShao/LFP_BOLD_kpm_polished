@@ -8,7 +8,7 @@ This test branch isolates why `event_detection` results may differ between:
 Current scope:
 
 - `e10gb1` only
-- compare legacy prepared MAT input vs current `load_blp_dataset(cfg_E10gb1())`
+- compare legacy prepared MAT input vs current `io_raw.load_blp_dataset(cfg_E10gb1())`
 - compare fixed `Fs = 667` vs `Fs = 1 / median(session_dx)`
 - compare one-shot concatenated detection vs session-split detection
 

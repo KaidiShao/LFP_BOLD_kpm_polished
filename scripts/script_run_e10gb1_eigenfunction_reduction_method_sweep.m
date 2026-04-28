@@ -49,7 +49,7 @@ end
 
 consensus_loader_cfg = struct();
 consensus_loader_cfg.file_stem = base_cfg.dataset.name;
-[C_consensus, source_consensus_file] = load_consensus_state_results( ...
+[C_consensus, source_consensus_file] = io_results.load_consensus_state_results( ...
     consensus_loader_cfg, base_cfg.dataset.processed_root, []);
 
 fprintf('Running eigenfunction dimension-reduction method sweep.\n');

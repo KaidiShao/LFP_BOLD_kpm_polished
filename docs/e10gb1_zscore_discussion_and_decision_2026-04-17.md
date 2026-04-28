@@ -249,8 +249,8 @@ normalization is global per-channel zscore:
 
 Related scripts explicitly set:
 
-- [script_compute_blp_bandpass_events.m](/D:/Onedrive/ICPBR/Alberta/koopman_events/LFP_BOLD_kpm_polished/scripts/script_compute_blp_bandpass_events.m:1)
-- [script_run_blp_event_pipeline_to_top_windows.m](/D:/Onedrive/ICPBR/Alberta/koopman_events/LFP_BOLD_kpm_polished/scripts/script_run_blp_event_pipeline_to_top_windows.m:1)
+- [script_compute_one_cfg_blp_bandpass_events.m](/D:/Onedrive/ICPBR/Alberta/koopman_events/LFP_BOLD_kpm_polished/scripts/script_compute_one_cfg_blp_bandpass_events.m:1)
+- [script_run_e10gb1_to_event_diversity_windows.m](/D:/Onedrive/ICPBR/Alberta/koopman_events/LFP_BOLD_kpm_polished/scripts/script_run_e10gb1_to_event_diversity_windows.m:1)
 
 The official current processed event file for `E10gb1` was refreshed with
 this metadata:

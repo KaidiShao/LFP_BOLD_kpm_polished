@@ -10,7 +10,7 @@ clc;
 project_root = fileparts(fileparts(mfilename('fullpath')));
 addpath(genpath(project_root));
 
-input_root = fullfile(get_project_processed_root(), 'bold_observables');
+input_root = fullfile(io_project.get_project_processed_root(), 'bold_observables');
 output_file = fullfile(input_root, 'bold_observable_shape_report.csv');
 
 dataset_ids = {'E10.gb1', 'E10.gH1', 'E10.fV1', 'F12.m01'};

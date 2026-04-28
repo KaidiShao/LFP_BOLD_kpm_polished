@@ -75,7 +75,7 @@ cfg.plot.within_gap = 1.4;
 cfg.plot.between_gap = 2.2;
 cfg.plot.trace_linewidth = 0.4;
 
-output_root = get_project_processed_root();
+output_root = io_project.get_project_processed_root();
 log_dir = fullfile(output_root, cfg.file_stem, 'postprocessing', 'logs');
 if exist(log_dir, 'dir') ~= 7
     mkdir(log_dir);
@@ -112,7 +112,7 @@ try
     load_opts.metadata_only = true;
     load_opts.cache_to_disk = false;
     load_opts.force_recompute = true;
-    D_meta = load_blp_dataset(cfg, load_opts);
+    D_meta = io_raw.load_blp_dataset(cfg, load_opts);
     local_print_dataset_summary(D_meta);
 
     if require_expected_sessions
@@ -200,10 +200,6 @@ try
         params.summary_params = struct( ...
             'save_csv', true, ...
             'force_recompute', force_events);
-        params.spectrogram_opts = struct( ...
-            'save_precision', 'single', ...
-            'return_data', false, ...
-            'force_recompute', false);
         params.window_params = struct( ...
             'window_length_samples', 6000, ...
             'window_mode', 'global', ...
@@ -214,7 +210,29 @@ try
         params.plot_params = struct( ...
             'skip_existing', false);
 
-        out = run_blp_pipeline_to_state_diversity_top_windows(cfg, output_root, params);
+        D_event = io_raw.load_blp_dataset(cfg);
+        fprintf('Loaded concatenated raw data: [%d, %d]\n', size(D_event.data, 1), size(D_event.data, 2));
+
+        R = compute_blp_bandpass_events(D_event, cfg, output_root, params.event_params);
+        E = compute_blp_event_density(cfg, output_root, R, params.density_params, R.save_file);
+        C = compute_blp_consensus_states(cfg, output_root, R, params.consensus_params, R.save_file);
+        S = summarize_blp_consensus_state_types(cfg, output_root, C, params.summary_params, C.save_file);
+        W = analyze_blp_consensus_state_diversity_windows(cfg, output_root, C, params.window_params, C.save_file);
+        Spec = require_saved_blp_spectrogram_support(cfg, output_root);
+        P = export_top_consensus_state_diversity_window_plots(cfg, output_root, W, params.plot_params);
+
+        out = struct( ...
+            'cfg', cfg, ...
+            'output_root', output_root, ...
+            'D', D_event, ...
+            'R', R, ...
+            'E', E, ...
+            'C', C, ...
+            'S', S, ...
+            'Spec', Spec, ...
+            'W', W, ...
+            'P', P, ...
+            'params', params);
         local_verify_event_pipeline_output(out, D_meta.session_ids);
 
         fprintf('Event line complete.\n');
@@ -263,28 +281,10 @@ end
 end
 
 function S = local_find_expected_spectrogram_files(cfg, output_root)
-save_dir = fullfile(output_root, cfg.file_stem, 'spectrograms');
-pad_sec = 20;
-pad_mode = 'mirror';
-if isfield(cfg, 'spectrogram')
-    if isfield(cfg.spectrogram, 'pad_sec')
-        pad_sec = cfg.spectrogram.pad_sec;
-    end
-    if isfield(cfg.spectrogram, 'pad_mode')
-        pad_mode = cfg.spectrogram.pad_mode;
-    end
-end
-
-if strcmpi(pad_mode, 'mirror')
-    pad_tag = sprintf('_mirrorpad_%gs', pad_sec);
-else
-    pad_tag = '_nopad';
-end
-pad_tag = strrep(pad_tag, '.', 'p');
-
+spec = resolve_regionmean_spectrogram_files(cfg, output_root);
 S = struct();
-S.abs_file = fullfile(save_dir, [cfg.file_stem, pad_tag, '_regionmean_spectrograms_abs.mat']);
-S.complex_file = fullfile(save_dir, [cfg.file_stem, pad_tag, '_regionmean_spectrograms_complex.mat']);
+S.abs_file = spec.abs_file;
+S.complex_file = spec.complex_file;
 end
 
 function local_verify_spectrogram_files(abs_file, complex_file, expected_n_time)

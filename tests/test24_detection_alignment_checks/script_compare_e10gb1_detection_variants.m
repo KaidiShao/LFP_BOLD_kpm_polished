@@ -1,7 +1,7 @@
 % Compare legacy test23-style detection against current e10gb1 variants.
 %
 % This test branch isolates three suspected sources of mismatch:
-%   1. legacy prepared MAT input vs current load_blp_dataset(cfg_E10gb1())
+%   1. legacy prepared MAT input vs current io_raw.load_blp_dataset(cfg_E10gb1())
 %   2. fixed Fs = 667 vs inferred Fs = 1 / median(session_dx)
 %   3. one-shot concatenated detection vs session-split detection
 %
@@ -181,7 +181,7 @@ end
 
 
 function loader = local_load_current_e10_data(cfg)
-D = load_blp_dataset(cfg);
+D = io_raw.load_blp_dataset(cfg);
 
 loader = struct();
 loader.source_name = 'current_loader';
@@ -543,8 +543,8 @@ if isempty(variant_idx)
     error('Variant "%s" was not found.', variant_name);
 end
 
-output_root = get_project_processed_root();
-[R_saved, source_event_file] = load_event_results(cfg, output_root, []);
+output_root = io_project.get_project_processed_root();
+[R_saved, source_event_file] = io_results.load_event_results(cfg, output_root, []);
 saved_result = local_extract_saved_detect_result(R_saved);
 current_result = variant_results(variant_idx);
 

@@ -1,5 +1,5 @@
 function S = compute_blp_region_spectrograms_streamed(D, cfg, output_root, opts)
-% Compute region-mean spectrograms and stream large arrays directly to disk.
+% Canonical region-mean spectrogram pipeline with streamed MAT-file output.
 %
 % Inputs
 %   D           Output struct from load_blp_dataset
@@ -15,6 +15,9 @@ function S = compute_blp_region_spectrograms_streamed(D, cfg, output_root, opts)
 %               the full concatenated spectrogram arrays
 %
 % Notes
+%   - This is the canonical implementation used by the preprocessing
+%     pipeline. The older compute_blp_region_spectrograms entry is now a
+%     thin in-memory wrapper around this function.
 %   - This version is intended for large datasets where concatenating all
 %     sessions in memory would exceed MATLAB's available RAM.
 %   - The saved MAT files keep the same variable names used by the rest of
@@ -24,7 +27,7 @@ function S = compute_blp_region_spectrograms_streamed(D, cfg, output_root, opts)
 %  Defaults
 %  =========================
 if nargin < 3 || isempty(output_root)
-    output_root = get_project_processed_root();
+    output_root = io_project.get_project_processed_root();
 end
 
 if nargin < 4
@@ -85,24 +88,16 @@ n_regions = numel(regions);
 %% =========================
 %  Prepare save paths
 %  =========================
-if ~isfield(cfg, 'file_stem')
-    error('cfg.file_stem is required.');
-end
-
-save_dir = fullfile(output_root, cfg.file_stem, 'spectrograms');
+spec_files = resolve_regionmean_spectrogram_files(cfg, output_root);
+save_dir = spec_files.save_dir;
 if exist(save_dir, 'dir') ~= 7
     mkdir(save_dir);
 end
 
-if strcmpi(pad_mode, 'mirror')
-    pad_tag = sprintf('_mirrorpad_%gs', pad_sec);
-else
-    pad_tag = '_nopad';
-end
-pad_tag = strrep(pad_tag, '.', 'p');
-
-file_abs = fullfile(save_dir, [cfg.file_stem, pad_tag, '_regionmean_spectrograms_abs.mat']);
-file_complex = fullfile(save_dir, [cfg.file_stem, pad_tag, '_regionmean_spectrograms_complex.mat']);
+pad_sec = spec_files.pad_sec;
+pad_mode = spec_files.pad_mode;
+file_abs = spec_files.abs_file;
+file_complex = spec_files.complex_file;
 
 %% =========================
 %  Cached result
@@ -159,7 +154,7 @@ for k = 1:n_sessions
     sid = D.session_ids(k);
     idx1 = D.session_start_idx(k);
     idx2 = D.session_end_idx(k);
-    x = read_blp_data_slice(D, idx1:idx2);   % time x channel
+    x = io_raw.read_blp_data_slice(D, idx1:idx2);   % time x channel
 
     dx = D.session_dx(k);
     Fs_session = 1 / dx;
@@ -267,7 +262,7 @@ session_end_idx = cumsum(session_lengths);
 session_start_idx = [1; session_end_idx(1:end-1) + 1];
 border_idx = session_end_idx(1:end-1);
 
-timesout = build_global_time_axis_from_sessions(session_lengths, D.session_dx);
+timesout = io_utils.build_global_time_axis_from_sessions(session_lengths, D.session_dx);
 
 session_ids = D.session_ids;
 session_raw_lengths = D.session_lengths;

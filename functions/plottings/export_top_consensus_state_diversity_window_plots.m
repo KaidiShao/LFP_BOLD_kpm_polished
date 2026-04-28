@@ -2,7 +2,7 @@ function P = export_top_consensus_state_diversity_window_plots(cfg, output_root,
 %EXPORT_TOP_CONSENSUS_STATE_DIVERSITY_WINDOW_PLOTS Save top-window figures.
 
 if nargin < 2 || isempty(output_root)
-    output_root = get_project_processed_root();
+    output_root = io_project.get_project_processed_root();
 end
 
 if nargin < 3 || isempty(W) || ~isstruct(W)
@@ -39,80 +39,8 @@ end
 plot_manifest = strings(height(top_windows), 1);
 
 for i = 1:height(top_windows)
-    idx1 = double(top_windows.global_start_idx(i));
-    idx2 = double(top_windows.global_end_idx(i));
-
-    if ismember('global_window_idx', top_windows.Properties.VariableNames)
-        file_stub = sprintf('rank_%02d_globalwin_%03d', ...
-            double(top_windows.state_diversity_rank(i)), ...
-            double(top_windows.global_window_idx(i)));
-    else
-        file_stub = sprintf('rank_%02d_session_%02d_window_%03d', ...
-            double(top_windows.state_diversity_rank(i)), ...
-            double(top_windows.session_id(i)), ...
-            double(top_windows.window_idx_in_session(i)));
-    end
-
-    png_file = fullfile(params.save_dir, [file_stub, '.png']);
-    if params.skip_existing && exist(png_file, 'file') == 2
-        plot_manifest(i) = string(png_file);
-        continue;
-    end
-
-    if idx1 < 1 || idx2 > numel(t_raw) || idx2 < idx1
-        error('Invalid global sample range [%d, %d] for row %d.', idx1, idx2, i);
-    end
-
-    time_range_sec = [t_raw(idx1), t_raw(idx2)];
-    base_plot_cache = build_blp_plot_window_cache(plot_data, time_range_sec, params.freq_range_to_plot);
-    hfig = plot_blp_segment_with_spectrogram(base_plot_cache, params.spec_colormap, params.color_limits);
-
-    if ismember('global_window_idx', top_windows.Properties.VariableNames)
-        title_line_1 = sprintf('Rank %d | globalwin %d | sessions %d->%d | samples [%d,%d]', ...
-            double(top_windows.state_diversity_rank(i)), ...
-            double(top_windows.global_window_idx(i)), ...
-            double(top_windows.start_session_id(i)), ...
-            double(top_windows.end_session_id(i)), ...
-            idx1, idx2);
-    else
-        title_line_1 = sprintf('Rank %d | session %d | window %d | samples [%d,%d]', ...
-            double(top_windows.state_diversity_rank(i)), ...
-            double(top_windows.session_id(i)), ...
-            double(top_windows.window_idx_in_session(i)), ...
-            idx1, idx2);
-    end
-
-    title_line_2 = sprintf('richness=%d | total states=%d | dominant=%s | Hnorm=%.3f', ...
-        double(top_windows.active_state_richness(i)), ...
-        double(top_windows.total_state_window_count(i)), ...
-        char(string(top_windows.dominant_state(i))), ...
-        double(top_windows.normalized_state_entropy(i)));
-    fig_title = sprintf('%s | %s', title_line_1, title_line_2);
-
-    tl = findobj(hfig, 'Type', 'tiledlayout');
-    if ~isempty(tl)
-        title(tl(1), {title_line_1, title_line_2}, 'Interpreter', 'none', ...
-            'FontSize', 24, 'FontWeight', 'bold');
-    else
-        set(hfig, 'Name', fig_title, 'NumberTitle', 'off');
-    end
-
-    set(hfig, 'Name', fig_title, 'NumberTitle', 'off');
-    target_size_px = local_get_export_size(params);
-    set(hfig, 'Units', 'pixels');
-    fig_pos = get(hfig, 'Position');
-    fig_pos(3:4) = target_size_px;
-    set(hfig, 'Position', fig_pos);
-    drawnow;
-
-    if params.save_png
-        local_export_fixed_canvas_png(hfig, png_file, target_size_px, params.resolution);
-    end
-    plot_manifest(i) = string(png_file);
-
-    if params.close_after_save
-        close(hfig);
-    end
+    plot_manifest(i) = string(local_export_one_top_window_plot( ...
+        plot_data, top_windows, params, i, t_raw));
 end
 
 manifest_table = top_windows;
@@ -129,55 +57,11 @@ end
 
 
 function params = apply_default_params(cfg, output_root, params)
+params_block = build_blp_consensus_state_pipeline_params(struct('plot_params', params));
+params = params_block.plot_params;
+
 if ~isfield(params, 'save_dir') || isempty(params.save_dir)
     params.save_dir = fullfile(output_root, cfg.file_stem, 'consensus_state_diversity_windows', 'top_window_plots');
-end
-
-if ~isfield(params, 'save_png')
-    params.save_png = true;
-end
-
-if ~isfield(params, 'close_after_save')
-    params.close_after_save = true;
-end
-
-if ~isfield(params, 'skip_existing')
-    params.skip_existing = false;
-end
-
-if ~isfield(params, 'fallback_size_px') || isempty(params.fallback_size_px)
-    params.fallback_size_px = [4979, 2888];
-end
-
-if ~isfield(params, 'reference_dir')
-    params.reference_dir = '';
-end
-
-if ~isfield(params, 'resolution') || isempty(params.resolution)
-    params.resolution = 220;
-end
-
-if ~isfield(params, 'event_colors') || isempty(params.event_colors)
-    params.event_colors = [ ...
-        0.0000, 0.4470, 0.7410; ...
-        0.8500, 0.3250, 0.0980; ...
-        0.4660, 0.6740, 0.1880];
-end
-
-if ~isfield(params, 'freq_range_to_plot') || isempty(params.freq_range_to_plot)
-    params.freq_range_to_plot = [0, 250];
-end
-
-if ~isfield(params, 'color_limits')
-    params.color_limits = [];
-end
-
-if ~isfield(params, 'spec_colormap') || isempty(params.spec_colormap)
-    if exist('othercolor', 'file') == 2
-        params.spec_colormap = flipud(othercolor('Spectral10'));
-    else
-        params.spec_colormap = flipud(turbo(256));
-    end
 end
 end
 
@@ -193,6 +77,89 @@ for i = 1:numel(required_vars)
         error('Top-window table is missing required column "%s".', required_vars{i});
     end
 end
+end
+
+
+function png_file = local_export_one_top_window_plot(plot_data, top_windows, params, row_idx, t_raw)
+idx1 = double(top_windows.global_start_idx(row_idx));
+idx2 = double(top_windows.global_end_idx(row_idx));
+png_file = fullfile(params.save_dir, [local_build_file_stub(top_windows, row_idx), '.png']);
+
+if params.skip_existing && exist(png_file, 'file') == 2
+    return;
+end
+
+if idx1 < 1 || idx2 > numel(t_raw) || idx2 < idx1
+    error('Invalid global sample range [%d, %d] for row %d.', idx1, idx2, row_idx);
+end
+
+time_range_sec = [t_raw(idx1), t_raw(idx2)];
+base_plot_cache = build_blp_plot_window_cache(plot_data, time_range_sec, params.freq_range_to_plot);
+hfig = plot_blp_segment_with_spectrogram(base_plot_cache, params.spec_colormap, params.color_limits);
+
+[title_line_1, title_line_2, fig_title] = local_build_plot_titles(top_windows, row_idx, idx1, idx2);
+tl = findobj(hfig, 'Type', 'tiledlayout');
+if ~isempty(tl)
+    title(tl(1), {title_line_1, title_line_2}, 'Interpreter', 'none', ...
+        'FontSize', 24, 'FontWeight', 'bold');
+else
+    set(hfig, 'Name', fig_title, 'NumberTitle', 'off');
+end
+
+set(hfig, 'Name', fig_title, 'NumberTitle', 'off');
+target_size_px = local_get_export_size(params);
+set(hfig, 'Units', 'pixels');
+fig_pos = get(hfig, 'Position');
+fig_pos(3:4) = target_size_px;
+set(hfig, 'Position', fig_pos);
+drawnow;
+
+if params.save_png
+    local_export_fixed_canvas_png(hfig, png_file, target_size_px, params.resolution);
+end
+
+if params.close_after_save
+    close(hfig);
+end
+end
+
+
+function file_stub = local_build_file_stub(top_windows, row_idx)
+if ismember('global_window_idx', top_windows.Properties.VariableNames)
+    file_stub = sprintf('rank_%02d_globalwin_%03d', ...
+        double(top_windows.state_diversity_rank(row_idx)), ...
+        double(top_windows.global_window_idx(row_idx)));
+else
+    file_stub = sprintf('rank_%02d_session_%02d_window_%03d', ...
+        double(top_windows.state_diversity_rank(row_idx)), ...
+        double(top_windows.session_id(row_idx)), ...
+        double(top_windows.window_idx_in_session(row_idx)));
+end
+end
+
+
+function [title_line_1, title_line_2, fig_title] = local_build_plot_titles(top_windows, row_idx, idx1, idx2)
+if ismember('global_window_idx', top_windows.Properties.VariableNames)
+    title_line_1 = sprintf('Rank %d | globalwin %d | sessions %d->%d | samples [%d,%d]', ...
+        double(top_windows.state_diversity_rank(row_idx)), ...
+        double(top_windows.global_window_idx(row_idx)), ...
+        double(top_windows.start_session_id(row_idx)), ...
+        double(top_windows.end_session_id(row_idx)), ...
+        idx1, idx2);
+else
+    title_line_1 = sprintf('Rank %d | session %d | window %d | samples [%d,%d]', ...
+        double(top_windows.state_diversity_rank(row_idx)), ...
+        double(top_windows.session_id(row_idx)), ...
+        double(top_windows.window_idx_in_session(row_idx)), ...
+        idx1, idx2);
+end
+
+title_line_2 = sprintf('richness=%d | total states=%d | dominant=%s | Hnorm=%.3f', ...
+    double(top_windows.active_state_richness(row_idx)), ...
+    double(top_windows.total_state_window_count(row_idx)), ...
+    char(string(top_windows.dominant_state(row_idx))), ...
+    double(top_windows.normalized_state_entropy(row_idx)));
+fig_title = sprintf('%s | %s', title_line_1, title_line_2);
 end
 
 

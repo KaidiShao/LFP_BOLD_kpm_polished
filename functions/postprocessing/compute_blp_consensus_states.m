@@ -16,7 +16,7 @@ function C = compute_blp_consensus_states(cfg, output_root, R, params, source_ev
 %  Input defaults
 %  =========================
 if nargin < 2 || isempty(output_root)
-    output_root = get_project_processed_root();
+    output_root = io_project.get_project_processed_root();
 end
 
 if nargin < 3
@@ -44,39 +44,7 @@ end
 if isempty(source_event_file) && isfield(R, 'save_file') && ~isempty(R.save_file)
     source_event_file = R.save_file;
 end
-
-[n_bands, n_channels] = size(R.DetectResults);
-band_labels = get_band_labels(R, n_bands);
-
-[session_ids, session_lengths, session_dx, session_start_idx, session_end_idx, ...
-    dx_ref, L_total] = resolve_time_metadata(R);
-
-channel_sites = get_channel_sites(R, n_channels);
-[regions, channel_region_idx] = resolve_region_metadata(R, channel_sites, n_channels);
-n_regions = numel(regions);
-
-[theta_idx, gamma_idx, ripple_idx] = resolve_band_indices(band_labels, params, n_bands);
-role_idx = [theta_idx, gamma_idx, ripple_idx];
-if numel(unique(role_idx)) ~= 3
-    error('Theta, gamma, and ripple must map to three distinct band indices.');
-end
-
-if isempty(params.min_channel_count)
-    min_channel_count = floor(n_channels / 2) + 1;
-else
-    min_channel_count = double(params.min_channel_count);
-end
-
-if ~isscalar(min_channel_count) || min_channel_count < 1 || min_channel_count > n_channels
-    error('params.min_channel_count must be empty or an integer between 1 and %d.', n_channels);
-end
-
-min_channel_count = round(min_channel_count);
-
-required_region_idx = zeros(1, 0);
-if params.require_region_presence
-    required_region_idx = resolve_required_regions(regions, params.required_regions);
-end
+meta = resolve_consensus_context(R, params);
 
 %% =========================
 %  Prepare save path
@@ -86,15 +54,14 @@ if exist(save_dir, 'dir') ~= 7
     mkdir(save_dir);
 end
 
-save_tag = build_save_tag(cfg.file_stem, min_channel_count, params.require_region_presence, params.required_regions);
+save_tag = build_save_tag(cfg.file_stem, meta.min_channel_count, params.require_region_presence, params.required_regions);
 save_file = fullfile(save_dir, [save_tag, '.mat']);
-source_event_file_signature = build_file_signature(source_event_file);
-band_role_indices = struct('theta', theta_idx, 'gamma', gamma_idx, 'ripple', ripple_idx);
+source_event_file_signature = io_utils.build_file_signature(source_event_file);
 
 if exist(save_file, 'file') == 2 && ~params.force_recompute
     S = load(save_file);
     if isfield(S, 'C') && can_reuse_saved_result( ...
-            S.C, params, min_channel_count, band_role_indices, source_event_file_signature)
+            S.C, params, meta.min_channel_count, meta.band_role_indices, source_event_file_signature)
         C = S.C;
         return;
     end
@@ -103,81 +70,22 @@ end
 %% =========================
 %  Band-level consensus masks
 %  =========================
-consensus_mask_by_band = false(L_total, n_bands);
-channel_support_count_by_band = zeros(L_total, n_bands, 'uint16');
-region_support_count_by_band = zeros(L_total, n_regions, n_bands, 'uint16');
-band_consensus = repmat(struct( ...
-    'name', '', ...
-    'band_index', [], ...
-    'event_win', zeros(0, 2), ...
-    'event_win_session_local', zeros(0, 2), ...
-    'event_session_idx', zeros(0, 1), ...
-    'event_session_id', zeros(0, 1), ...
-    'duration_samples', zeros(0, 1), ...
-    'duration_sec', zeros(0, 1), ...
-    'support_count_max', zeros(0, 1), ...
-    'support_count_mean', zeros(0, 1), ...
-    'region_labels', {cell(0, 1)}, ...
-    'region_support_max', zeros(0, 0), ...
-    'region_support_mean', zeros(0, 0), ...
-    'window_count', 0, ...
-    'total_consensus_samples', 0, ...
-    'total_consensus_duration_sec', 0), n_bands, 1);
-
-for b = 1:n_bands
-    channel_active = build_band_channel_mask(R.DetectResults(b, :), L_total);
-
-    band_support = sum(channel_active, 2);
-    region_support = zeros(L_total, n_regions, 'uint16');
-    for r = 1:n_regions
-        region_support(:, r) = uint16(sum(channel_active(:, channel_region_idx == r), 2));
-    end
-
-    consensus_mask = band_support >= min_channel_count;
-    if params.require_region_presence
-        consensus_mask = consensus_mask & all(region_support(:, required_region_idx) > 0, 2);
-    end
-
-    consensus_mask_by_band(:, b) = consensus_mask;
-    channel_support_count_by_band(:, b) = uint16(band_support);
-    region_support_count_by_band(:, :, b) = region_support;
-
-    band_consensus(b) = build_band_consensus_summary( ...
-        band_labels{b}, ...
-        b, ...
-        consensus_mask, ...
-        uint16(band_support), ...
-        region_support, ...
-        regions, ...
-        session_ids, ...
-        session_dx, ...
-        session_start_idx, ...
-        session_end_idx);
-end
+[consensus_mask_by_band, channel_support_count_by_band, ...
+    region_support_count_by_band, band_consensus] = ...
+    build_band_consensus_outputs(R.DetectResults, meta, params.require_region_presence);
 
 %% =========================
 %  Derived state labels
 %  =========================
-state_catalog = build_state_catalog();
-
-[state_windows, state_code_by_time] = build_event_defined_state_windows( ...
-    state_catalog, ...
-    band_labels, ...
-    band_consensus, ...
-    consensus_mask_by_band, ...
-    channel_support_count_by_band, ...
-    region_support_count_by_band, ...
-    regions, ...
-    theta_idx, ...
-    gamma_idx, ...
-    ripple_idx, ...
-    session_ids, ...
-    session_dx, ...
-    session_start_idx, ...
-    params.state_merge_gap_samples);
-
-[state_sample_count, state_duration_sec, state_window_count] = ...
-    summarize_state_occupancy(state_code_by_time, state_catalog, session_dx, session_start_idx, session_end_idx, state_windows);
+[state_catalog, state_windows, state_code_by_time, ...
+    state_sample_count, state_duration_sec, state_window_count] = ...
+    build_state_outputs( ...
+        band_consensus, ...
+        consensus_mask_by_band, ...
+        channel_support_count_by_band, ...
+        region_support_count_by_band, ...
+        meta, ...
+        params.state_merge_gap_samples);
 
 %% =========================
 %  Pack output
@@ -189,24 +97,24 @@ C.source_event_file_signature = source_event_file_signature;
 C.dataset_id = cfg.dataset_id;
 C.file_stem = cfg.file_stem;
 
-C.band_labels = band_labels;
-C.band_role_indices = band_role_indices;
+C.band_labels = meta.band_labels;
+C.band_role_indices = meta.band_role_indices;
 C.selected_channels = get_optional_field(R, 'selected_channels', []);
-C.channel_sites = channel_sites;
-C.regions = regions;
-C.channel_region_idx = channel_region_idx;
+C.channel_sites = meta.channel_sites;
+C.regions = meta.regions;
+C.channel_region_idx = meta.channel_region_idx;
 
-C.session_ids = session_ids;
-C.session_lengths = session_lengths;
-C.session_dx = session_dx;
-C.session_start_idx = session_start_idx;
-C.session_end_idx = session_end_idx;
-C.dx_ref = dx_ref;
-C.L_total = L_total;
+C.session_ids = meta.session_ids;
+C.session_lengths = meta.session_lengths;
+C.session_dx = meta.session_dx;
+C.session_start_idx = meta.session_start_idx;
+C.session_end_idx = meta.session_end_idx;
+C.dx_ref = meta.dx_ref;
+C.L_total = meta.L_total;
 
-C.min_channel_count = min_channel_count;
+C.min_channel_count = meta.min_channel_count;
 C.majority_rule = sprintf('Band consensus requires at least %d/%d channels active at each sample.', ...
-    min_channel_count, n_channels);
+    meta.min_channel_count, meta.n_channels);
 C.require_region_presence = logical(params.require_region_presence);
 C.required_regions = params.required_regions(:);
 C.state_definition_mode = char(string(params.state_definition_mode));
@@ -230,6 +138,152 @@ C.state_window_count = state_window_count;
 C.params = params;
 
 save(save_file, 'C', '-v7.3');
+end
+
+
+function meta = resolve_consensus_context(R, params)
+[n_bands, n_channels] = size(R.DetectResults);
+band_labels = get_band_labels(R, n_bands);
+
+[session_ids, session_lengths, session_dx, session_start_idx, session_end_idx, ...
+    dx_ref, L_total] = resolve_time_metadata(R);
+
+channel_sites = get_channel_sites(R, n_channels);
+[regions, channel_region_idx] = resolve_region_metadata(R, channel_sites, n_channels);
+
+[theta_idx, gamma_idx, ripple_idx] = resolve_band_indices(band_labels, params, n_bands);
+role_idx = [theta_idx, gamma_idx, ripple_idx];
+if numel(unique(role_idx)) ~= 3
+    error('Theta, gamma, and ripple must map to three distinct band indices.');
+end
+
+if isempty(params.min_channel_count)
+    min_channel_count = floor(n_channels / 2) + 1;
+else
+    min_channel_count = double(params.min_channel_count);
+end
+
+if ~isscalar(min_channel_count) || min_channel_count < 1 || min_channel_count > n_channels
+    error('params.min_channel_count must be empty or an integer between 1 and %d.', n_channels);
+end
+
+required_region_idx = zeros(1, 0);
+if params.require_region_presence
+    required_region_idx = resolve_required_regions(regions, params.required_regions);
+end
+
+meta = struct();
+meta.n_bands = n_bands;
+meta.n_channels = n_channels;
+meta.n_regions = numel(regions);
+meta.band_labels = band_labels;
+meta.band_role_indices = struct('theta', theta_idx, 'gamma', gamma_idx, 'ripple', ripple_idx);
+meta.theta_idx = theta_idx;
+meta.gamma_idx = gamma_idx;
+meta.ripple_idx = ripple_idx;
+meta.session_ids = session_ids;
+meta.session_lengths = session_lengths;
+meta.session_dx = session_dx;
+meta.session_start_idx = session_start_idx;
+meta.session_end_idx = session_end_idx;
+meta.dx_ref = dx_ref;
+meta.L_total = L_total;
+meta.channel_sites = channel_sites;
+meta.regions = regions;
+meta.channel_region_idx = channel_region_idx;
+meta.min_channel_count = round(min_channel_count);
+meta.required_region_idx = required_region_idx;
+end
+
+
+function [consensus_mask_by_band, channel_support_count_by_band, ...
+    region_support_count_by_band, band_consensus] = ...
+    build_band_consensus_outputs(DetectResults, meta, require_region_presence)
+consensus_mask_by_band = false(meta.L_total, meta.n_bands);
+channel_support_count_by_band = zeros(meta.L_total, meta.n_bands, 'uint16');
+region_support_count_by_band = zeros(meta.L_total, meta.n_regions, meta.n_bands, 'uint16');
+band_consensus = repmat(struct( ...
+    'name', '', ...
+    'band_index', [], ...
+    'event_win', zeros(0, 2), ...
+    'event_win_session_local', zeros(0, 2), ...
+    'event_session_idx', zeros(0, 1), ...
+    'event_session_id', zeros(0, 1), ...
+    'duration_samples', zeros(0, 1), ...
+    'duration_sec', zeros(0, 1), ...
+    'support_count_max', zeros(0, 1), ...
+    'support_count_mean', zeros(0, 1), ...
+    'region_labels', {cell(0, 1)}, ...
+    'region_support_max', zeros(0, 0), ...
+    'region_support_mean', zeros(0, 0), ...
+    'window_count', 0, ...
+    'total_consensus_samples', 0, ...
+    'total_consensus_duration_sec', 0), meta.n_bands, 1);
+
+for b = 1:meta.n_bands
+    channel_active = build_band_channel_mask(DetectResults(b, :), meta.L_total);
+    band_support = sum(channel_active, 2);
+    region_support = zeros(meta.L_total, meta.n_regions, 'uint16');
+
+    for r = 1:meta.n_regions
+        region_support(:, r) = uint16(sum(channel_active(:, meta.channel_region_idx == r), 2));
+    end
+
+    consensus_mask = band_support >= meta.min_channel_count;
+    if require_region_presence
+        consensus_mask = consensus_mask & all(region_support(:, meta.required_region_idx) > 0, 2);
+    end
+
+    consensus_mask_by_band(:, b) = consensus_mask;
+    channel_support_count_by_band(:, b) = uint16(band_support);
+    region_support_count_by_band(:, :, b) = region_support;
+
+    band_consensus(b) = build_band_consensus_summary( ...
+        meta.band_labels{b}, ...
+        b, ...
+        consensus_mask, ...
+        uint16(band_support), ...
+        region_support, ...
+        meta.regions, ...
+        meta.session_ids, ...
+        meta.session_dx, ...
+        meta.session_start_idx, ...
+        meta.session_end_idx);
+end
+end
+
+
+function [state_catalog, state_windows, state_code_by_time, ...
+    state_sample_count, state_duration_sec, state_window_count] = ...
+    build_state_outputs( ...
+        band_consensus, consensus_mask_by_band, channel_support_count_by_band, ...
+        region_support_count_by_band, meta, state_merge_gap_samples)
+state_catalog = build_state_catalog();
+
+[state_windows, state_code_by_time] = build_event_defined_state_windows( ...
+    state_catalog, ...
+    meta.band_labels, ...
+    band_consensus, ...
+    consensus_mask_by_band, ...
+    channel_support_count_by_band, ...
+    region_support_count_by_band, ...
+    meta.regions, ...
+    meta.theta_idx, ...
+    meta.gamma_idx, ...
+    meta.ripple_idx, ...
+    meta.session_ids, ...
+    meta.session_dx, ...
+    meta.session_start_idx, ...
+    state_merge_gap_samples);
+
+[state_sample_count, state_duration_sec, state_window_count] = ...
+    summarize_state_occupancy( ...
+        state_code_by_time, ...
+        state_catalog, ...
+        meta.session_dx, ...
+        meta.session_start_idx, ...
+        meta.session_end_idx, ...
+        state_windows);
 end
 
 
@@ -351,7 +405,7 @@ if ~tf
     return;
 end
 
-tf = file_signature_matches(C.source_event_file_signature, source_event_file_signature);
+tf = io_utils.file_signature_matches(C.source_event_file_signature, source_event_file_signature);
 end
 
 

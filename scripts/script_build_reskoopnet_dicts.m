@@ -1,6 +1,6 @@
 cfg = cfg_F12m01();
 
-D = load_blp_dataset(cfg);
+D = io_raw.load_blp_dataset(cfg);
 
 params = struct();
 params.spec_mode = 'complex_split';   % 'abs' or 'complex_split'
@@ -10,7 +10,7 @@ params.high_group_size = 2;
 params.chunk_size = 200000;
 params.precision = 'single';
 
-output_root = get_project_processed_root();
+output_root = io_project.get_project_processed_root();
 
 dict = build_reskoopnet_dicts( ...
     D, cfg, output_root, params);

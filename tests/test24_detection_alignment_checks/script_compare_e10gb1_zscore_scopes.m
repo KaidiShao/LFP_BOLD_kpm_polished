@@ -18,7 +18,7 @@ addpath(genpath(repo_root));
 close all force;
 
 cfg = cfg_E10gb1();
-D = load_blp_dataset(cfg);
+D = io_raw.load_blp_dataset(cfg);
 
 output_dir = fullfile(this_script_dir, 'outputs_e10gb1_zscore_scope');
 if exist(output_dir, 'dir') ~= 7

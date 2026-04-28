@@ -21,7 +21,7 @@ efun_batch_override.run_key_filter = {'e10gh1/abs_kv'};
 efun_batch_override.method_filter = {'svd', 'logsvd', 'nmf', 'mds'};
 efun_batch_override.sweep_name = 'dr_no_umap';
 efun_batch_override.master_manifest_file = fullfile( ...
-    get_project_processed_root(), 'e10gh1_abs_kv_efun_mlp_dr_no_umap.csv');
+    io_project.get_project_processed_root(), 'e10gh1_abs_kv_efun_mlp_dr_no_umap.csv');
 
 efun_batch_override.continue_on_error = true;
 efun_batch_override.skip_unavailable_methods = true;

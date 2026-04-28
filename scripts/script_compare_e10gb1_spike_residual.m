@@ -35,7 +35,7 @@ params.spike_channels = 'all';
 % params.session_filter_ids = [6];
 % params.dictionary_file = 'E:\DataPons_processed\e10gb1\reskoopnet_dictionary\e10gb1_low50_high250_g2_abs_single.mat';
 
-params.output_root = get_project_processed_root();
+params.output_root = io_project.get_project_processed_root();
 params.save_dir = fullfile(params.output_root, cfg.file_stem, 'spike_residual_comparison');
 params.save_results = true;
 params.verbose = true;

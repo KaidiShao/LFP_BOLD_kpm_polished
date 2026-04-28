@@ -13,7 +13,7 @@ set(groot, 'defaultFigureVisible', 'off');
 
 params = struct();
 params.autodl_roots = {'E:\autodl_results_local\bold_wsl'};
-params.processed_root = get_project_processed_root();
+params.processed_root = io_project.get_project_processed_root();
 
 % Leave empty to scan everything that has completed output chunks.
 params.dataset_stems = {};

@@ -12,7 +12,7 @@ cfg = cfg_E10gb1();
 % Exact semantic ROI names such as cfg.bold.role_map.hp / .elehp are best
 % defined in the dataset cfg_*.m file rather than in scripts.
 
-D = load_bold_dataset(cfg);
+D = io_raw.load_bold_dataset(cfg);
 
 X = D.data;
 session_ids = D.session_ids;

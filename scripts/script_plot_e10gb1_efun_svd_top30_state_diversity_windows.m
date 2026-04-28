@@ -83,7 +83,7 @@ top_windows = top_windows(1:n_windows, :);
 
 consensus_loader_cfg = struct();
 consensus_loader_cfg.file_stem = cfg.dataset.name;
-[C_consensus, source_consensus_file] = load_consensus_state_results( ...
+[C_consensus, source_consensus_file] = io_results.load_consensus_state_results( ...
     consensus_loader_cfg, output_root, []);
 fprintf('Loading consensus states:\n  %s\n', source_consensus_file);
 

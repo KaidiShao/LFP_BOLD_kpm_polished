@@ -24,7 +24,7 @@ set(groot, 'defaultFigureVisible', 'off');
 
 batch_opts = struct();
 batch_opts.autodl_root = 'E:\autodl_results';
-batch_opts.processed_root = get_project_processed_root();
+batch_opts.processed_root = io_project.get_project_processed_root();
 batch_opts.master_manifest_file = fullfile(batch_opts.processed_root, ...
     'efun_mlp_dr_all.csv');
 batch_opts.min_chunk_files = 1;
@@ -103,7 +103,7 @@ for r = 1:numel(run_specs)
     try
         consensus_loader_cfg = struct();
         consensus_loader_cfg.file_stem = base_cfg.dataset.name;
-        [C_consensus, source_consensus_file] = load_consensus_state_results( ...
+        [C_consensus, source_consensus_file] = io_results.load_consensus_state_results( ...
             consensus_loader_cfg, base_cfg.dataset.processed_root, []);
         fprintf('Consensus states:\n  %s\n', source_consensus_file);
     catch ME
@@ -312,7 +312,7 @@ spec.source_run_name = char(source_run_name);
 spec.output_run_name = char(output_run_name);
 spec.source_data_dir = fullfile(autodl_root, spec.dataset_name, ...
     'mlp', 'outputs', spec.source_run_name);
-spec.output_root = fullfile(get_project_processed_root(), spec.dataset_name, ...
+spec.output_root = fullfile(io_project.get_project_processed_root(), spec.dataset_name, ...
     'efun', spec.output_run_name);
 end
 
@@ -381,7 +381,7 @@ end
 
 function cfg = local_configure_run_cfg(cfg, run_spec, batch_opts)
 cfg.dataset.name = run_spec.dataset_name;
-cfg.dataset.processed_root = get_project_processed_root();
+cfg.dataset.processed_root = io_project.get_project_processed_root();
 cfg.source.mode = 'chunk_dir';
 cfg.source.data_dir = run_spec.source_data_dir;
 cfg.source.concat.scan_mode = 'uniform_except_last';

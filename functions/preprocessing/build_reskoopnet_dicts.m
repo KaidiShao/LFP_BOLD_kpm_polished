@@ -22,7 +22,7 @@ function dict = build_reskoopnet_dicts(D, cfg, output_root, params)
 %  Defaults
 %  =========================
 if nargin < 3 || isempty(output_root)
-    output_root = get_project_processed_root();
+    output_root = io_project.get_project_processed_root();
 end
 
 if nargin < 4
@@ -55,41 +55,18 @@ end
 %% =========================
 %  Locate spectrogram files
 %  =========================
-pad_sec = 20;
-pad_mode = 'mirror';
-
-if isfield(cfg, 'spectrogram')
-    if isfield(cfg.spectrogram, 'pad_sec')
-        pad_sec = cfg.spectrogram.pad_sec;
-    end
-    if isfield(cfg.spectrogram, 'pad_mode')
-        pad_mode = cfg.spectrogram.pad_mode;
-    end
-end
-
-abs_file = find_regionmean_spectrogram_file_by_kind(cfg, output_root, pad_mode, pad_sec, 'abs');
-complex_file = find_regionmean_spectrogram_file_by_kind(cfg, output_root, pad_mode, pad_sec, 'complex');
+spec_files = resolve_regionmean_spectrogram_files(cfg, output_root);
+abs_file = local_require_existing_file(spec_files.abs_file, spec_files.abs_name);
+complex_file = local_require_existing_file(spec_files.complex_file, spec_files.complex_name);
 
 %% =========================
-%  Read spectrogram metadata
+%  Build feature plan
 %  =========================
-meta = load(abs_file, 'freqs', 'regions');
-freqs = double(meta.freqs(:));
-regions = meta.regions;
-
-low_idx = find(freqs >= 0 & freqs <= params.low_full_max_hz);
-high_idx = find(freqs > params.low_full_max_hz & freqs <= params.high_max_hz);
-high_groups = make_consecutive_groups(high_idx, params.high_group_size);
-
-if isempty(low_idx) && isempty(high_groups)
-    error('No spectrogram frequency bins were selected.');
-end
-
-%% =========================
-%  Build observable metadata
-%  =========================
-obs_info = build_observable_info(D, cfg, regions, freqs, low_idx, high_groups, params.spec_mode);
-n_obs = height(obs_info);
+plan = build_feature_plan(D, cfg, abs_file, complex_file, params);
+obs_info = plan.obs_info;
+freqs = plan.freqs;
+regions = plan.regions;
+n_obs = plan.n_obs;
 if isfield(D, 'n_time') && ~isempty(D.n_time)
     n_time = D.n_time;
 else
@@ -99,7 +76,7 @@ end
 fprintf('Total time points   : %d\n', n_time);
 fprintf('Total observables   : %d\n', n_obs);
 fprintf('BLP observables     : %d\n', numel(D.selected_channels));
-fprintf('Spectrogram regions : %d\n', numel(regions));
+fprintf('Spectrogram regions : %d\n', numel(plan.regions));
 
 %% =========================
 %  Prepare save paths
@@ -129,15 +106,8 @@ end
 %% =========================
 %  Prepare source spectrogram matfile
 %  =========================
-if strcmp(params.spec_mode, 'abs')
-    Mspec = matfile(abs_file);
-    spec_var_name = 'tmpall_mean_abs';
-else
-    Mspec = matfile(complex_file);
-    spec_var_name = 'tmpall_mean_complex';
-end
-
-spec_size = size(Mspec, spec_var_name);
+Mspec = matfile(plan.source_file);
+spec_size = size(Mspec, plan.source_var_name);
 if spec_size(2) ~= n_time
     error('Spectrogram time dimension (%d) does not match raw data length (%d).', spec_size(2), n_time);
 end
@@ -168,8 +138,7 @@ for k = 1:n_chunks
 
     fprintf('[%d/%d] Building dictionary chunk %d:%d ...\n', k, n_chunks, idx1, idx2);
 
-    obs_chunk = build_observable_chunk(D, Mspec, spec_var_name, idx, ...
-        low_idx, high_groups, regions, params);
+    obs_chunk = build_dictionary_chunk(D, Mspec, idx, plan);
 
     if strcmp(params.precision, 'single')
         obs_chunk = single(obs_chunk);
@@ -186,7 +155,7 @@ end
 session_ids = D.session_ids;
 session_lengths = D.session_lengths;
 session_dx = D.session_dx;
-dx = resolve_uniform_dx(session_dx);
+dx = io_utils.resolve_uniform_dx(session_dx);
 dt = dx;
 fs = [];
 if ~isempty(dx)
@@ -225,108 +194,71 @@ dict.fs = fs;
 dict.obs_info = obs_info;
 end
 
-function dx = resolve_uniform_dx(session_dx)
-% Return a scalar sampling interval only when all sessions agree.
+function plan = build_feature_plan(D, cfg, abs_file, complex_file, params)
+% Build one canonical feature-layout plan used by both data writing and metadata.
 
-dx = [];
-if isempty(session_dx)
-    return;
+meta = load(abs_file, 'freqs', 'regions');
+freqs = double(meta.freqs(:));
+regions = meta.regions;
+
+low_idx = find(freqs >= 0 & freqs <= params.low_full_max_hz);
+high_idx = find(freqs > params.low_full_max_hz & freqs <= params.high_max_hz);
+high_groups = make_consecutive_groups(high_idx, params.high_group_size);
+
+if isempty(low_idx) && isempty(high_groups)
+    error('No spectrogram frequency bins were selected.');
 end
 
-session_dx = double(session_dx(:));
-session_dx = session_dx(isfinite(session_dx) & session_dx > 0);
-if isempty(session_dx)
-    return;
-end
+spec_features = build_spec_feature_plan(regions, freqs, low_idx, high_groups, params.spec_mode);
 
-dx0 = median(session_dx);
-tol = max(1e-12, 1e-5 * abs(dx0));
-if all(abs(session_dx - dx0) <= tol)
-    dx = dx0;
-else
-    warning(['Session sampling periods are inconsistent; saving session_dx ', ...
-        'without scalar dx/dt. Downstream code must handle sessions explicitly.']);
-end
-end
-
-function obs_chunk = build_observable_chunk(D, Mspec, spec_var_name, idx, ...
-    low_idx, high_groups, regions, params)
-% Build one time chunk of observables.
-
-raw_chunk = double(read_blp_data_slice(D, idx));   % time x n_channels
-n_time_chunk = size(raw_chunk, 1);
-n_blp = size(raw_chunk, 2);
-n_regions = numel(regions);
-n_spec_per_region = numel(low_idx) + numel(high_groups);
+plan = struct();
+plan.freqs = freqs;
+plan.regions = regions;
+plan.n_blp = numel(D.selected_channels);
+plan.spec_features = spec_features;
+plan.obs_info = build_observable_info(D, cfg, spec_features);
+plan.n_obs = height(plan.obs_info);
 
 if strcmp(params.spec_mode, 'abs')
-    n_obs = n_blp + n_regions * n_spec_per_region;
+    plan.source_file = abs_file;
+    plan.source_var_name = 'tmpall_mean_abs';
 else
-    n_obs = n_blp + n_regions * n_spec_per_region * 2;
+    plan.source_file = complex_file;
+    plan.source_var_name = 'tmpall_mean_complex';
+end
 end
 
-obs_chunk = zeros(n_time_chunk, n_obs);
+function obs_chunk = build_dictionary_chunk(D, Mspec, idx, plan)
+% Build one output chunk using a precomputed feature plan.
 
-% Keep all BLP channels
-obs_chunk(:, 1:n_blp) = raw_chunk;
+raw_chunk = double(io_raw.read_blp_data_slice(D, idx));   % time x n_channels
+n_time_chunk = size(raw_chunk, 1);
+obs_chunk = zeros(n_time_chunk, plan.n_obs);
+obs_chunk(:, 1:plan.n_blp) = raw_chunk;
 
-% Read spectrogram chunk
-spec_chunk = Mspec.(spec_var_name)(:, idx, :);   % freq x time x region
-spec_chunk = double(spec_chunk);
+spec_chunk = double(Mspec.(plan.source_var_name)(:, idx, :));   % freq x time x region
 
-col0 = n_blp + 1;
+for i_feat = 1:numel(plan.spec_features)
+    feat = plan.spec_features(i_feat);
+    spec_region = spec_chunk(:, :, feat.region_idx);
 
-for r = 1:n_regions
-    spec_region = spec_chunk(:, :, r);   % freq x time
-
-    if strcmp(params.spec_mode, 'abs')
-        feat = aggregate_spectrogram_features(spec_region, low_idx, high_groups);
-        n_feat = size(feat, 2);
-
-        obs_chunk(:, col0:col0+n_feat-1) = feat;
-        col0 = col0 + n_feat;
-
-    else
-        feat_real = aggregate_spectrogram_features(real(spec_region), low_idx, high_groups);
-        feat_imag = aggregate_spectrogram_features(imag(spec_region), low_idx, high_groups);
-
-        n_feat = size(feat_real, 2);
-
-        obs_chunk(:, col0:col0+n_feat-1) = feat_real;
-        col0 = col0 + n_feat;
-
-        obs_chunk(:, col0:col0+n_feat-1) = feat_imag;
-        col0 = col0 + n_feat;
+    switch feat.part
+        case 'abs'
+            spec_part = spec_region;
+        case 'real'
+            spec_part = real(spec_region);
+        case 'imag'
+            spec_part = imag(spec_region);
+        otherwise
+            error('Unsupported spectrogram part: %s', feat.part);
     end
-end
-end
 
-function feat = aggregate_spectrogram_features(spec_region, low_idx, high_groups)
-% Aggregate a spectrogram matrix into ResKoopNet-friendly observables.
-%
-% Input
-%   spec_region  freq x time
-%
-% Output
-%   feat         time x n_features
-
-n_time = size(spec_region, 2);
-n_low = numel(low_idx);
-n_high = numel(high_groups);
-
-feat = zeros(n_time, n_low + n_high);
-
-% Keep all low-frequency bins
-if n_low > 0
-    feat(:, 1:n_low) = transpose(spec_region(low_idx, :));
-end
-
-% Average high-frequency bins in small groups
-col0 = n_low + 1;
-for g = 1:n_high
-    idxg = high_groups{g};
-    feat(:, col0) = transpose(mean(spec_region(idxg, :), 1));
-    col0 = col0 + 1;
+    if feat.freq_idx_start == feat.freq_idx_end
+        obs_chunk(:, plan.n_blp + i_feat) = transpose(spec_part(feat.freq_idx_start, :));
+    else
+        obs_chunk(:, plan.n_blp + i_feat) = transpose(mean( ...
+            spec_part(feat.freq_idx_start:feat.freq_idx_end, :), 1));
+    end
 end
 end
 
@@ -348,119 +280,112 @@ for i = 1:group_size:n
 end
 end
 
-function obs_info = build_observable_info(D, cfg, regions, freqs, low_idx, high_groups, spec_mode)
-% Build a table describing every observable dimension.
+function spec_features = build_spec_feature_plan(regions, freqs, low_idx, high_groups, spec_mode)
+% Expand one spectrogram layout plan in the exact saved column order.
 
-dim_id = [];
-source = {};
-name = {};
-channel_idx = [];
-channel_site = {};
-region_idx = [];
-region_label = {};
-part = {};
-freq_idx_start = [];
-freq_idx_end = [];
-freq_start_hz = [];
-freq_end_hz = [];
-aggregation = {};
+spec_features = struct( ...
+    'part', {}, ...
+    'region_idx', {}, ...
+    'region_label', {}, ...
+    'freq_idx_start', {}, ...
+    'freq_idx_end', {}, ...
+    'freq_start_hz', {}, ...
+    'freq_end_hz', {}, ...
+    'aggregation', {}, ...
+    'name', {});
 
-row_id = 0;
-
-%% -------------------------
-%  Raw BLP observables
-%  -------------------------
-sites = cfg.channels.sites(D.selected_channels);
-
-for c = 1:numel(D.selected_channels)
-    row_id = row_id + 1;
-
-    dim_id(end+1, 1) = row_id;
-    source{end+1, 1} = 'blp';
-    name{end+1, 1} = sprintf('blp_ch%02d_%s', D.selected_channels(c), sites{c});
-
-    channel_idx(end+1, 1) = D.selected_channels(c);
-    channel_site{end+1, 1} = sites{c};
-
-    region_idx(end+1, 1) = NaN;
-    region_label{end+1, 1} = '';
-    part{end+1, 1} = 'raw';
-
-    freq_idx_start(end+1, 1) = NaN;
-    freq_idx_end(end+1, 1) = NaN;
-    freq_start_hz(end+1, 1) = NaN;
-    freq_end_hz(end+1, 1) = NaN;
-
-    aggregation{end+1, 1} = 'raw';
-end
-
-%% -------------------------
-%  Spectrogram observables
-%  -------------------------
 if strcmp(spec_mode, 'abs')
     parts_to_add = {'abs'};
 else
-    % Match build_observable_chunk(): for complex_split, all real-valued
-    % features are written first, followed by the corresponding imag block.
     parts_to_add = {'real', 'imag'};
 end
 
+row_id = 0;
 for r = 1:numel(regions)
     for p = 1:numel(parts_to_add)
-        % Low-frequency single-bin observables
+        part_name = parts_to_add{p};
+
         for i = 1:numel(low_idx)
             fi = low_idx(i);
-            part_name = parts_to_add{p};
-
             row_id = row_id + 1;
-
-            dim_id(end+1, 1) = row_id;
-            source{end+1, 1} = 'spectrogram';
-            name{end+1, 1} = sprintf('spec_%s_%s_f%.3f', part_name, regions{r}, freqs(fi));
-
-            channel_idx(end+1, 1) = NaN;
-            channel_site{end+1, 1} = '';
-
-            region_idx(end+1, 1) = r;
-            region_label{end+1, 1} = regions{r};
-            part{end+1, 1} = part_name;
-
-            freq_idx_start(end+1, 1) = fi;
-            freq_idx_end(end+1, 1) = fi;
-            freq_start_hz(end+1, 1) = freqs(fi);
-            freq_end_hz(end+1, 1) = freqs(fi);
-
-            aggregation{end+1, 1} = 'single_bin';
+            spec_features(row_id).part = part_name; %#ok<AGROW>
+            spec_features(row_id).region_idx = r;
+            spec_features(row_id).region_label = regions{r};
+            spec_features(row_id).freq_idx_start = fi;
+            spec_features(row_id).freq_idx_end = fi;
+            spec_features(row_id).freq_start_hz = freqs(fi);
+            spec_features(row_id).freq_end_hz = freqs(fi);
+            spec_features(row_id).aggregation = 'single_bin';
+            spec_features(row_id).name = sprintf('spec_%s_%s_f%.3f', ...
+                part_name, regions{r}, freqs(fi));
         end
-        % High-frequency grouped observables
+
         for g = 1:numel(high_groups)
             idxg = high_groups{g};
             fi1 = idxg(1);
             fi2 = idxg(end);
-            part_name = parts_to_add{p};
-
             row_id = row_id + 1;
-
-            dim_id(end+1, 1) = row_id;
-            source{end+1, 1} = 'spectrogram';
-            name{end+1, 1} = sprintf('spec_%s_%s_f%.3f_%.3f', ...
+            spec_features(row_id).part = part_name; %#ok<AGROW>
+            spec_features(row_id).region_idx = r;
+            spec_features(row_id).region_label = regions{r};
+            spec_features(row_id).freq_idx_start = fi1;
+            spec_features(row_id).freq_idx_end = fi2;
+            spec_features(row_id).freq_start_hz = freqs(fi1);
+            spec_features(row_id).freq_end_hz = freqs(fi2);
+            spec_features(row_id).aggregation = sprintf('mean_%d_bins', numel(idxg));
+            spec_features(row_id).name = sprintf('spec_%s_%s_f%.3f_%.3f', ...
                 part_name, regions{r}, freqs(fi1), freqs(fi2));
-
-            channel_idx(end+1, 1) = NaN;
-            channel_site{end+1, 1} = '';
-
-            region_idx(end+1, 1) = r;
-            region_label{end+1, 1} = regions{r};
-            part{end+1, 1} = part_name;
-
-            freq_idx_start(end+1, 1) = fi1;
-            freq_idx_end(end+1, 1) = fi2;
-            freq_start_hz(end+1, 1) = freqs(fi1);
-            freq_end_hz(end+1, 1) = freqs(fi2);
-
-            aggregation{end+1, 1} = sprintf('mean_%d_bins', numel(idxg));
         end
     end
+end
+end
+
+function obs_info = build_observable_info(D, cfg, spec_features)
+% Build a table describing every observable dimension.
+
+sites = cfg.channels.sites(D.selected_channels);
+n_blp = numel(D.selected_channels);
+n_spec = numel(spec_features);
+n_rows = n_blp + n_spec;
+
+dim_id = (1:n_rows).';
+source = cell(n_rows, 1);
+name = cell(n_rows, 1);
+channel_idx = nan(n_rows, 1);
+channel_site = cell(n_rows, 1);
+region_idx = nan(n_rows, 1);
+region_label = cell(n_rows, 1);
+part = cell(n_rows, 1);
+freq_idx_start = nan(n_rows, 1);
+freq_idx_end = nan(n_rows, 1);
+freq_start_hz = nan(n_rows, 1);
+freq_end_hz = nan(n_rows, 1);
+aggregation = cell(n_rows, 1);
+
+for c = 1:n_blp
+    source{c} = 'blp';
+    name{c} = sprintf('blp_ch%02d_%s', D.selected_channels(c), sites{c});
+    channel_idx(c) = D.selected_channels(c);
+    channel_site{c} = sites{c};
+    region_label{c} = '';
+    part{c} = 'raw';
+    aggregation{c} = 'raw';
+end
+
+for i_feat = 1:n_spec
+    row = n_blp + i_feat;
+    feat = spec_features(i_feat);
+    source{row} = 'spectrogram';
+    name{row} = feat.name;
+    channel_site{row} = '';
+    region_idx(row) = feat.region_idx;
+    region_label{row} = feat.region_label;
+    part{row} = feat.part;
+    freq_idx_start(row) = feat.freq_idx_start;
+    freq_idx_end(row) = feat.freq_idx_end;
+    freq_start_hz(row) = feat.freq_start_hz;
+    freq_end_hz(row) = feat.freq_end_hz;
+    aggregation{row} = feat.aggregation;
 end
 
 obs_info = table( ...
@@ -473,37 +398,8 @@ obs_info = table( ...
     aggregation);
 end
 
-function spec_file = find_regionmean_spectrogram_file_by_kind(cfg, output_root, pad_mode, pad_sec, kind)
-% Find a saved region-mean spectrogram file by kind.
-%
-% kind = 'abs' or 'complex'
-
-if strcmpi(pad_mode, 'mirror')
-    pad_tag = sprintf('_mirrorpad_%gs', pad_sec);
-else
-    pad_tag = '_nopad';
+function file = local_require_existing_file(file, target_name)
+if exist(file, 'file') ~= 2
+    error('Spectrogram file not found: %s', target_name);
 end
-pad_tag = strrep(pad_tag, '.', 'p');
-
-if strcmp(kind, 'abs')
-    target_name = [cfg.file_stem, pad_tag, '_regionmean_spectrograms_abs.mat'];
-elseif strcmp(kind, 'complex')
-    target_name = [cfg.file_stem, pad_tag, '_regionmean_spectrograms_complex.mat'];
-else
-    error('Unsupported kind.');
-end
-
-search_dirs = { ...
-    fullfile(output_root, cfg.file_stem, 'spectrograms'), ...
-    fullfile(output_root, 'spectrograms', cfg.file_stem)};
-
-for i = 1:numel(search_dirs)
-    f = fullfile(search_dirs{i}, target_name);
-    if exist(f, 'file') == 2
-        spec_file = f;
-        return;
-    end
-end
-
-error('Spectrogram file not found: %s', target_name);
 end

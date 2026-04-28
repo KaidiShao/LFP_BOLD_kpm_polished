@@ -2,7 +2,7 @@ function plot_data = prepare_blp_plot_data(cfg, output_root, prep_cfg)
 %PREPARE_BLP_PLOT_DATA Load reusable data once for BLP plotting scripts.
 
 if nargin < 2 || isempty(output_root)
-    output_root = get_project_processed_root();
+    output_root = io_project.get_project_processed_root();
 end
 
 if nargin < 3
@@ -12,70 +12,13 @@ end
 prep_cfg = local_apply_default_prep_cfg(prep_cfg);
 plot_settings = local_resolve_plot_settings(cfg);
 
-D = load_blp_dataset(cfg);
-t_raw = local_build_global_time_axis(D.session_lengths, D.session_dx);
+D = io_raw.load_blp_dataset(cfg);
+t_raw = io_utils.build_global_time_axis_from_sessions(D.session_lengths, D.session_dx);
 t_raw = double(t_raw(:));
 
-R_events = [];
-n_event_bands = 0;
-band_colors = prep_cfg.band_colors;
-
-if prep_cfg.show_events
-    event_input = prep_cfg.event_input;
-    if isempty(event_input) || (ischar(event_input) || isstring(event_input)) && strcmpi(string(event_input), "auto")
-        event_input = [];
-    end
-
-    [R_events, ~] = load_event_results(cfg, output_root, event_input);
-    n_event_bands = size(R_events.DetectResults, 1);
-
-    if size(R_events.DetectResults, 2) ~= size(D.data, 2)
-        error('Event result channel count (%d) does not match loaded data (%d).', ...
-            size(R_events.DetectResults, 2), size(D.data, 2));
-    end
-
-    if isempty(band_colors)
-        band_colors = local_default_band_colors(n_event_bands);
-    end
-
-    if size(band_colors, 1) < n_event_bands || size(band_colors, 2) ~= 3
-        error('band_colors must be an N-by-3 array with at least one row per event band.');
-    end
-end
-
-C_consensus = [];
-if prep_cfg.show_consensus
-    consensus_input = prep_cfg.consensus_input;
-    if isempty(consensus_input) || (ischar(consensus_input) || isstring(consensus_input)) && strcmpi(string(consensus_input), "auto")
-        consensus_input = [];
-    end
-
-    [C_consensus, ~] = load_consensus_state_results(cfg, output_root, consensus_input);
-end
-
-spec_file = '';
-spec_freqs = [];
-spec_regions = {};
-spec_global_clim = [];
-if prep_cfg.include_spectrogram
-    pad_sec = 20;
-    pad_mode = 'mirror';
-
-    if isfield(cfg, 'spectrogram')
-        if isfield(cfg.spectrogram, 'pad_sec')
-            pad_sec = cfg.spectrogram.pad_sec;
-        end
-        if isfield(cfg.spectrogram, 'pad_mode')
-            pad_mode = cfg.spectrogram.pad_mode;
-        end
-    end
-
-    spec_file = local_find_regionmean_spectrogram_file(cfg, output_root, pad_mode, pad_sec);
-    meta = load(spec_file, 'freqs', 'regions');
-    spec_freqs = double(meta.freqs(:));
-    spec_regions = meta.regions;
-    spec_global_clim = local_get_or_compute_global_spectrogram_clim(spec_file, numel(spec_regions));
-end
+[R_events, n_event_bands, band_colors] = local_load_event_support(cfg, output_root, prep_cfg, D);
+C_consensus = local_load_consensus_support(cfg, output_root, prep_cfg);
+[spec_file, spec_freqs, spec_regions, spec_global_clim] = local_load_spectrogram_support(cfg, output_root, prep_cfg);
 
 plot_data = struct();
 plot_data.cfg = cfg;
@@ -177,65 +120,6 @@ end
 end
 
 
-function t = local_build_global_time_axis(session_lengths, session_dx)
-t = build_global_time_axis_from_sessions(session_lengths, session_dx);
-end
-
-
-function spec_file = local_find_regionmean_spectrogram_file(cfg, output_root, pad_mode, pad_sec)
-if strcmpi(pad_mode, 'mirror')
-    pad_tag = sprintf('_mirrorpad_%gs', pad_sec);
-else
-    pad_tag = '_nopad';
-end
-pad_tag = strrep(pad_tag, '.', 'p');
-
-target_name = [cfg.file_stem, pad_tag, '_regionmean_spectrograms_abs.mat'];
-
-search_dirs = { ...
-    fullfile(output_root, cfg.file_stem, 'spectrograms'), ...
-    fullfile(output_root, 'spectrograms', cfg.file_stem)};
-
-for i = 1:numel(search_dirs)
-    f = fullfile(search_dirs{i}, target_name);
-    if exist(f, 'file') == 2
-        spec_file = f;
-        return;
-    end
-end
-
-candidate_file_blocks = cell(numel(search_dirs), 1);
-for i = 1:numel(search_dirs)
-    if exist(search_dirs{i}, 'dir') ~= 7
-        continue;
-    end
-
-    L = dir(fullfile(search_dirs{i}, [cfg.file_stem, '*_regionmean_spectrograms_abs.mat']));
-    if ~isempty(L)
-        candidate_file_blocks{i} = fullfile({L.folder}.', {L.name}.');
-    end
-end
-
-candidate_files = vertcat(candidate_file_blocks{:});
-candidate_files = unique(candidate_files);
-
-if isempty(candidate_files)
-    error(['No saved region-mean spectrogram file was found.\n\n' ...
-        'Checked paths:\n%s\n%s\n\n' ...
-        'Expected file name:\n%s'], ...
-        search_dirs{1}, search_dirs{2}, target_name);
-elseif isscalar(candidate_files)
-    spec_file = candidate_files{1};
-else
-    msg = sprintf('Multiple candidate files were found:\n');
-    for i = 1:numel(candidate_files)
-        msg = sprintf('%s  %s\n', msg, candidate_files{i});
-    end
-    error(msg);
-end
-end
-
-
 function colors = local_default_band_colors(n_bands)
 base = [ ...
     0.0000, 0.4470, 0.7410; ...
@@ -249,6 +133,74 @@ if n_bands <= size(base, 1)
 else
     colors = lines(n_bands);
 end
+end
+
+
+function [R_events, n_event_bands, band_colors] = local_load_event_support(cfg, output_root, prep_cfg, D)
+R_events = [];
+n_event_bands = 0;
+band_colors = prep_cfg.band_colors;
+
+if ~prep_cfg.show_events
+    return;
+end
+
+event_input = prep_cfg.event_input;
+if isempty(event_input) || (ischar(event_input) || isstring(event_input)) && strcmpi(string(event_input), "auto")
+    event_input = [];
+end
+
+[R_events, ~] = io_results.load_event_results(cfg, output_root, event_input);
+n_event_bands = size(R_events.DetectResults, 1);
+
+if size(R_events.DetectResults, 2) ~= size(D.data, 2)
+    error('Event result channel count (%d) does not match loaded data (%d).', ...
+        size(R_events.DetectResults, 2), size(D.data, 2));
+end
+
+if isempty(band_colors)
+    band_colors = local_default_band_colors(n_event_bands);
+end
+
+if size(band_colors, 1) < n_event_bands || size(band_colors, 2) ~= 3
+    error('band_colors must be an N-by-3 array with at least one row per event band.');
+end
+end
+
+
+function C_consensus = local_load_consensus_support(cfg, output_root, prep_cfg)
+C_consensus = [];
+
+if ~prep_cfg.show_consensus
+    return;
+end
+
+consensus_input = prep_cfg.consensus_input;
+if isempty(consensus_input) || (ischar(consensus_input) || isstring(consensus_input)) && strcmpi(string(consensus_input), "auto")
+    consensus_input = [];
+end
+
+[C_consensus, ~] = io_results.load_consensus_state_results(cfg, output_root, consensus_input);
+end
+
+
+function [spec_file, spec_freqs, spec_regions, spec_global_clim] = local_load_spectrogram_support(cfg, output_root, prep_cfg)
+spec_file = '';
+spec_freqs = [];
+spec_regions = {};
+spec_global_clim = [];
+
+if ~prep_cfg.include_spectrogram
+    return;
+end
+
+spec_support = require_saved_blp_spectrogram_support(cfg, output_root);
+spec_file = spec_support.abs_file;
+
+meta = load(spec_file, 'freqs', 'regions');
+spec_freqs = double(meta.freqs(:));
+spec_regions = meta.regions;
+spec_global_clim = local_get_or_compute_global_spectrogram_clim(spec_file, numel(spec_regions));
 end
 
 

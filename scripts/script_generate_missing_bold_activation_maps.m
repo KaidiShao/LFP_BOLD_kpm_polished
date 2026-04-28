@@ -275,7 +275,7 @@ end
 
 
 function params = local_apply_defaults(params)
-params = local_set_default(params, 'processed_root', get_project_processed_root());
+params = local_set_default(params, 'processed_root', io_project.get_project_processed_root());
 params = local_set_default(params, 'datapons_root', 'E:\DataPons');
 params = local_set_default(params, 'autodl_roots', ...
     {'E:\autodl_results_local\bold_wsl', 'E:\autodl_results\bold'});

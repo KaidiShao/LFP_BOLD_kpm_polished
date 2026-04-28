@@ -84,7 +84,7 @@ for i_run = 1:numel(runs)
     t_run = tic;
     try
         source_cfg = local_source_cfg_for_run(run_info, params);
-        [EDMD_outputs, concat_info] = load_edmd_source(source_cfg);
+        [EDMD_outputs, concat_info] = io_edmd.load_edmd_source(source_cfg);
 
         observable_file = local_observable_file_for_run( ...
             params, run_info, EDMD_outputs);
@@ -190,7 +190,7 @@ if ~isfield(params, 'autodl_root') || isempty(params.autodl_root)
     params.autodl_root = 'E:\autodl_results';
 end
 if ~isfield(params, 'processed_root') || isempty(params.processed_root)
-    params.processed_root = get_project_processed_root();
+    params.processed_root = io_project.get_project_processed_root();
 end
 if ~isfield(params, 'dataset_stems')
     params.dataset_stems = {};

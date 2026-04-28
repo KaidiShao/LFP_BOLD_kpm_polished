@@ -176,7 +176,7 @@ That local loader path was removed.
 
 The batch script now calls:
 
-- `load_bold_dataset(cfg_mode)`
+- `io_raw.load_bold_dataset(cfg_mode)`
 
 This means the formal IO logic now lives in one place instead of being split
 between `functions/io` and `scripts`.

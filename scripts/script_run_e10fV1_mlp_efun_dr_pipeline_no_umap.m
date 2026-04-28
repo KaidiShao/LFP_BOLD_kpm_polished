@@ -7,7 +7,7 @@ this_script_dir = fileparts(mfilename('fullpath'));
 repo_root = fileparts(this_script_dir);
 addpath(genpath(repo_root));
 
-processed_root = get_project_processed_root();
+processed_root = io_project.get_project_processed_root();
 
 efun_batch_override = struct();
 efun_batch_override.dataset_filter = {'e10fV1'};

@@ -218,7 +218,7 @@ function base_plot_cache = local_prepare_base_plot_cache( ...
 
 show_events = ~isempty(event_input);
 
-D = load_blp_dataset(cfg);
+D = io_raw.load_blp_dataset(cfg);
 t_raw = local_build_global_time_axis(D.session_lengths, D.session_dx);
 t_raw = double(t_raw(:));
 
@@ -523,7 +523,7 @@ end
 
 
 function t = local_build_global_time_axis(session_lengths, session_dx)
-t = build_global_time_axis_from_sessions(session_lengths, session_dx);
+t = io_utils.build_global_time_axis_from_sessions(session_lengths, session_dx);
 end
 
 

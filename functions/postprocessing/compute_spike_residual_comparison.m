@@ -250,7 +250,7 @@ if ~isfield(params, 'dictionary_file')
     params.dictionary_file = '';
 end
 if ~isfield(params, 'output_root') || isempty(params.output_root)
-    params.output_root = get_project_processed_root();
+    params.output_root = io_project.get_project_processed_root();
 end
 if ~isfield(params, 'save_dir') || isempty(params.save_dir)
     params.save_dir = fullfile(params.output_root, cfg.file_stem, 'spike_residual_comparison');
@@ -400,7 +400,7 @@ for i = 1:numel(cfg_spk.sessions)
     end
 end
 
-Spk = load_spike_dataset(cfg_spk);
+Spk = io_raw.load_spike_dataset(cfg_spk);
 Spk.channel_selection_label = local_describe_spike_channel_selection(params.spike_channels, spike_channels);
 end
 

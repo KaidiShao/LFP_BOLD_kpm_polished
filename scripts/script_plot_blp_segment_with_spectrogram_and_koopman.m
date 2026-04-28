@@ -1,7 +1,7 @@
 this_script_dir = fileparts(mfilename('fullpath'));
 repo_root = fileparts(this_script_dir);
 addpath(genpath(repo_root));
-results_root = get_project_results_root(repo_root);
+results_root = io_project.get_project_results_root(repo_root);
 
 othercolor_root = 'D:\Onedrive\util_functions\othercolor\';
 if exist(othercolor_root, 'dir') == 7
@@ -20,7 +20,7 @@ cfg.plot.within_gap = 1.4;
 cfg.plot.between_gap = 2.2;
 cfg.plot.trace_linewidth = 0.4;
 
-output_root = get_project_processed_root();
+output_root = io_project.get_project_processed_root();
 time_range_sec = [300, 320];
 freq_range_to_plot = [0, 250];
 color_limits = [];
@@ -69,7 +69,7 @@ save_cfg = struct();
 save_cfg.do_save = false;
 save_cfg.save_dir = fullfile(results_root, 'blp_segment_with_spectrogram_and_koopman');
 
-[EDMD_outputs, ~, source_info] = load_edmd_source(source_cfg);
+[EDMD_outputs, ~, source_info] = io_edmd.load_edmd_source(source_cfg);
 fprintf('Loaded EDMD source mode: %s\n', source_info.mode);
 fprintf('EDMD source path:\n  %s\n', source_info.path);
 fprintf('Loaded %d time samples and %d modes before sorting.\n', ...

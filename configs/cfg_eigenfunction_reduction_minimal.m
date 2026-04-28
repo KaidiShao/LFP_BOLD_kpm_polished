@@ -8,7 +8,7 @@ dataset_name = 'e10gb1';
 observable_tag = 'abs';
 source_run_name = 'mlp_obs_e10gb1_260415_shuffle_plateau_projected_kv_abs';
 output_run_name = 'mlp260415_kvabs';
-processed_root = get_project_processed_root();
+processed_root = io_project.get_project_processed_root();
 output_root = fullfile(processed_root, dataset_name, ...
     'efun', output_run_name);
 figure_output_dir = fullfile(output_root, 'fig');

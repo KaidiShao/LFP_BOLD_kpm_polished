@@ -9,3 +9,8 @@ __pycache__/
 *.pyo
 *.pyd
 python_scripts/**/EDMD_NN_pipeline*.ipynb
+functions/io/raw/
+functions/io/results/
+functions/io/edmd/
+functions/io/project/
+functions/io/utils/

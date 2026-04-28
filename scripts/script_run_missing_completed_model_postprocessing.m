@@ -15,7 +15,7 @@ params = struct();
 params.dataset_stems = {'e10gb1', 'e10fV1', 'e10gh1', 'f12m01'};
 params.exclude_dataset_stems = {};
 params.autodl_root = 'E:\autodl_results';
-params.processed_root = get_project_processed_root();
+params.processed_root = io_project.get_project_processed_root();
 params.output_folder_name = 'mlp_top_state_diversity_postprocessing';
 
 % Remaining conditions after the 2026-04-23 E10/F12 postprocessing runs.

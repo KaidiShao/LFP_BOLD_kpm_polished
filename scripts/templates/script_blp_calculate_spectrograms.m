@@ -5,6 +5,7 @@ cfg = cfg_F12m01();
 cfg.spectrogram.pad_sec = 20;
 cfg.spectrogram.pad_mode = 'mirror';
 
-D = load_blp_dataset(cfg);
+D = io_raw.load_blp_dataset(cfg);
 output_root =  'D:\DataPons_processed\';
-S = compute_blp_region_spectrograms(D, cfg, output_root);
+spec_opts = struct();
+S = compute_blp_region_spectrograms_streamed(D, cfg, output_root, spec_opts);

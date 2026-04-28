@@ -62,7 +62,7 @@ for i_run = 1:numel(runs)
         source_cfg.mode = 'chunk_dir';
         source_cfg.data_dir = run_info.output_dir;
         source_cfg.concat = params.concat;
-        [EDMD_outputs, concat_info, source_info] = load_edmd_source(source_cfg);
+        [EDMD_outputs, concat_info, source_info] = io_edmd.load_edmd_source(source_cfg);
 
         observable_file = local_find_observable_file(params, run_info, EDMD_outputs);
         obs_meta = local_load_observable_metadata(observable_file);
@@ -169,7 +169,7 @@ end
 params.autodl_roots = cellstr(string(params.autodl_roots(:)).');
 
 if ~isfield(params, 'processed_root') || isempty(params.processed_root)
-    params.processed_root = get_project_processed_root();
+    params.processed_root = io_project.get_project_processed_root();
 end
 if ~isfield(params, 'dataset_stems') || isempty(params.dataset_stems)
     params.dataset_stems = {};

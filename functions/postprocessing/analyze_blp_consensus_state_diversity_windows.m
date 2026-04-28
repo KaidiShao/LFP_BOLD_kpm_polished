@@ -16,7 +16,7 @@ function W = analyze_blp_consensus_state_diversity_windows(cfg, output_root, C, 
 %  Input defaults
 %  =========================
 if nargin < 2 || isempty(output_root)
-    output_root = get_project_processed_root();
+    output_root = io_project.get_project_processed_root();
 end
 
 if nargin < 3
@@ -70,8 +70,7 @@ session_lengths = double(C.session_lengths(:));
 session_dx = double(C.session_dx(:));
 session_start_idx = double(C.session_start_idx(:));
 state_code_by_time = double(C.state_code_by_time(:));
-n_sessions = numel(session_ids);
-source_consensus_file_signature = build_file_signature(source_consensus_file);
+source_consensus_file_signature = io_utils.build_file_signature(source_consensus_file);
 
 %% =========================
 %  Prepare save path / cache
@@ -96,187 +95,42 @@ if exist(save_file, 'file') == 2 && ~params.force_recompute
 end
 
 %% =========================
-%  Collect state-window centers
-%  =========================
-state_window_centers = zeros(0, 1);
-state_window_codes = zeros(0, 1);
-state_window_session_idx = zeros(0, 1);
-
-if ~isempty(C.state_windows)
-    all_windows = C.state_windows(:);
-    n_all = numel(all_windows);
-    state_window_centers = zeros(n_all, 1);
-    state_window_codes = zeros(n_all, 1);
-    state_window_session_idx = zeros(n_all, 1);
-
-    for i = 1:n_all
-        state_window_centers(i) = round(mean(double(all_windows(i).win_global)));
-        state_window_codes(i) = double(all_windows(i).state_code);
-        state_window_session_idx(i) = double(all_windows(i).session_idx);
-    end
-end
-
-%% =========================
 %  Build per-window metrics
 %  =========================
-window_table_cells = cell(0, 1);
+state_window_info = collect_state_window_centers(C.state_windows);
 
 if strcmp(window_mode, 'session')
-    for k = 1:n_sessions
-        n_samples = session_lengths(k);
-        n_full_windows = floor(n_samples / window_length_samples);
-        has_partial = mod(n_samples, window_length_samples) > 0;
-
-        if params.keep_partial_window
-            n_windows = n_full_windows + double(has_partial);
-        else
-            n_windows = n_full_windows;
-        end
-
-        if n_windows == 0
-            continue;
-        end
-
-        session_counts = zeros(n_windows, n_states);
-        state_mask = state_window_session_idx == k;
-        centers_global = state_window_centers(state_mask);
-        codes_this = state_window_codes(state_mask);
-
-        if ~isempty(centers_global)
-            centers_local = centers_global - session_start_idx(k) + 1;
-
-            if params.keep_partial_window
-                valid_event = centers_local >= 1 & centers_local <= n_samples;
-            else
-                valid_event = centers_local >= 1 & centers_local <= n_full_windows * window_length_samples;
-            end
-
-            centers_local = centers_local(valid_event);
-            codes_this = codes_this(valid_event);
-
-            for s = 1:n_states
-                code = state_codes(s);
-                centers_state = centers_local(codes_this == code);
-                if isempty(centers_state)
-                    continue;
-                end
-
-                window_idx = ceil(centers_state / window_length_samples);
-                session_counts(:, s) = session_counts(:, s) + accumarray(window_idx, 1, [n_windows, 1], @sum, 0);
-            end
-        end
-
-        for w = 1:n_windows
-            local_start = (w - 1) * window_length_samples + 1;
-            local_end = min(w * window_length_samples, n_samples);
-            global_start = session_start_idx(k) + local_start - 1;
-            global_end = session_start_idx(k) + local_end - 1;
-
-            row = local_build_state_diversity_row( ...
-                session_ids(k), ...
-                w, ...
-                global_start, ...
-                global_end, ...
-                local_start, ...
-                local_end, ...
-                (global_end - global_start + 1) * session_dx(k), ...
-                session_counts(w, :), ...
-                state_labels, ...
-                state_codes, ...
-                n_states, ...
-                state_code_by_time);
-            window_table_cells{end+1, 1} = row; %#ok<AGROW>
-        end
-    end
+    window_table = build_session_window_table( ...
+        state_window_info, ...
+        session_ids, ...
+        session_lengths, ...
+        session_dx, ...
+        session_start_idx, ...
+        state_labels, ...
+        state_codes, ...
+        n_states, ...
+        state_code_by_time, ...
+        window_length_samples, ...
+        params.keep_partial_window);
 else
-    total_samples = numel(state_code_by_time);
-    n_full_windows = floor(total_samples / window_length_samples);
-    has_partial = mod(total_samples, window_length_samples) > 0;
-
-    if params.keep_partial_window
-        n_windows = n_full_windows + double(has_partial);
-    else
-        n_windows = n_full_windows;
-    end
-
-    global_counts = zeros(n_windows, n_states);
-
-    if ~isempty(state_window_centers)
-        if params.keep_partial_window
-            valid_event = state_window_centers >= 1 & state_window_centers <= total_samples;
-        else
-            valid_event = state_window_centers >= 1 & state_window_centers <= n_full_windows * window_length_samples;
-        end
-
-        centers_global = state_window_centers(valid_event);
-        codes_global = state_window_codes(valid_event);
-
-        for s = 1:n_states
-            code = state_codes(s);
-            centers_state = centers_global(codes_global == code);
-            if isempty(centers_state)
-                continue;
-            end
-
-            window_idx = ceil(centers_state / window_length_samples);
-            global_counts(:, s) = global_counts(:, s) + accumarray(window_idx, 1, [n_windows, 1], @sum, 0);
-        end
-    end
-
-    for w = 1:n_windows
-        global_start = (w - 1) * window_length_samples + 1;
-        global_end = min(w * window_length_samples, total_samples);
-        span_info = resolve_global_sample_span( ...
-            global_start, global_end, session_ids, session_lengths, session_dx, session_start_idx);
-
-        row = local_build_state_diversity_row( ...
-            span_info.start_session_id, ...
-            NaN, ...
-            global_start, ...
-            global_end, ...
-            span_info.start_local_idx, ...
-            span_info.end_local_idx, ...
-            span_info.duration_sec, ...
-            global_counts(w, :), ...
-            state_labels, ...
-            state_codes, ...
-            n_states, ...
-            state_code_by_time);
-        row.global_window_idx = w;
-        row.start_session_id = span_info.start_session_id;
-        row.end_session_id = span_info.end_session_id;
-        row.crosses_session_boundary = span_info.crosses_session_boundary;
-        window_table_cells{end+1, 1} = row; %#ok<AGROW>
-    end
-end
-
-if isempty(window_table_cells)
-    window_table = table();
-else
-    window_table = vertcat(window_table_cells{:});
+    window_table = build_global_window_table( ...
+        state_window_info, ...
+        session_ids, ...
+        session_lengths, ...
+        session_dx, ...
+        session_start_idx, ...
+        state_labels, ...
+        state_codes, ...
+        n_states, ...
+        state_code_by_time, ...
+        window_length_samples, ...
+        params.keep_partial_window);
 end
 
 %% =========================
 %  Rank state-diverse windows
 %  =========================
-if isempty(window_table)
-    top_windows_table = table();
-else
-    positive_mask = window_table.total_state_window_count > 0;
-    ranked_table = window_table(positive_mask, :);
-
-    if ~isempty(ranked_table)
-        ranked_table = sortrows(ranked_table, ...
-            {'active_state_richness', 'normalized_state_entropy', 'total_state_window_count', 'labeled_fraction', 'state_entropy'}, ...
-            {'descend', 'descend', 'descend', 'descend', 'descend'});
-
-        top_windows_table = ranked_table(1:min(top_k, height(ranked_table)), :);
-        top_windows_table.state_diversity_rank = transpose(1:height(top_windows_table));
-        top_windows_table = movevars(top_windows_table, 'state_diversity_rank', 'Before', 1);
-    else
-        top_windows_table = table();
-    end
-end
+top_windows_table = rank_state_diverse_windows(window_table, top_k);
 
 W = struct();
 W.save_file = save_file;
@@ -327,6 +181,193 @@ end
 if ~isfield(params, 'force_recompute')
     params.force_recompute = false;
 end
+end
+
+
+function state_window_info = collect_state_window_centers(state_windows)
+state_window_info = struct( ...
+    'centers', zeros(0, 1), ...
+    'codes', zeros(0, 1), ...
+    'session_idx', zeros(0, 1));
+
+if isempty(state_windows)
+    return;
+end
+
+all_windows = state_windows(:);
+n_all = numel(all_windows);
+state_window_info.centers = zeros(n_all, 1);
+state_window_info.codes = zeros(n_all, 1);
+state_window_info.session_idx = zeros(n_all, 1);
+
+for i = 1:n_all
+    state_window_info.centers(i) = round(mean(double(all_windows(i).win_global)));
+    state_window_info.codes(i) = double(all_windows(i).state_code);
+    state_window_info.session_idx(i) = double(all_windows(i).session_idx);
+end
+end
+
+
+function window_table = build_session_window_table( ...
+    state_window_info, session_ids, session_lengths, session_dx, session_start_idx, ...
+    state_labels, state_codes, n_states, state_code_by_time, ...
+    window_length_samples, keep_partial_window)
+window_table_cells = cell(0, 1);
+n_sessions = numel(session_ids);
+
+for k = 1:n_sessions
+    n_samples = session_lengths(k);
+    n_windows = count_windows(n_samples, window_length_samples, keep_partial_window);
+    if n_windows == 0
+        continue;
+    end
+
+    centers_local = state_window_info.centers(state_window_info.session_idx == k) - session_start_idx(k) + 1;
+    codes_this = state_window_info.codes(state_window_info.session_idx == k);
+    session_counts = accumulate_window_counts( ...
+        centers_local, codes_this, state_codes, n_states, n_windows, ...
+        window_length_samples, n_samples, keep_partial_window);
+
+    for w = 1:n_windows
+        local_start = (w - 1) * window_length_samples + 1;
+        local_end = min(w * window_length_samples, n_samples);
+        global_start = session_start_idx(k) + local_start - 1;
+        global_end = session_start_idx(k) + local_end - 1;
+
+        row = local_build_state_diversity_row( ...
+            session_ids(k), ...
+            w, ...
+            global_start, ...
+            global_end, ...
+            local_start, ...
+            local_end, ...
+            (global_end - global_start + 1) * session_dx(k), ...
+            session_counts(w, :), ...
+            state_labels, ...
+            state_codes, ...
+            n_states, ...
+            state_code_by_time);
+        window_table_cells{end+1, 1} = row; %#ok<AGROW>
+    end
+end
+
+if isempty(window_table_cells)
+    window_table = table();
+else
+    window_table = vertcat(window_table_cells{:});
+end
+end
+
+
+function window_table = build_global_window_table( ...
+    state_window_info, session_ids, session_lengths, session_dx, session_start_idx, ...
+    state_labels, state_codes, n_states, state_code_by_time, ...
+    window_length_samples, keep_partial_window)
+window_table_cells = cell(0, 1);
+total_samples = numel(state_code_by_time);
+n_windows = count_windows(total_samples, window_length_samples, keep_partial_window);
+if n_windows == 0
+    window_table = table();
+    return;
+end
+
+global_counts = accumulate_window_counts( ...
+    state_window_info.centers, ...
+    state_window_info.codes, ...
+    state_codes, ...
+    n_states, ...
+    n_windows, ...
+    window_length_samples, ...
+    total_samples, ...
+    keep_partial_window);
+
+for w = 1:n_windows
+    global_start = (w - 1) * window_length_samples + 1;
+    global_end = min(w * window_length_samples, total_samples);
+    span_info = io_utils.resolve_global_sample_span( ...
+        global_start, global_end, session_ids, session_lengths, session_dx, session_start_idx);
+
+    row = local_build_state_diversity_row( ...
+        span_info.start_session_id, ...
+        NaN, ...
+        global_start, ...
+        global_end, ...
+        span_info.start_local_idx, ...
+        span_info.end_local_idx, ...
+        span_info.duration_sec, ...
+        global_counts(w, :), ...
+        state_labels, ...
+        state_codes, ...
+        n_states, ...
+        state_code_by_time);
+    row.global_window_idx = w;
+    row.start_session_id = span_info.start_session_id;
+    row.end_session_id = span_info.end_session_id;
+    row.crosses_session_boundary = span_info.crosses_session_boundary;
+    window_table_cells{end+1, 1} = row; %#ok<AGROW>
+end
+
+window_table = vertcat(window_table_cells{:});
+end
+
+
+function n_windows = count_windows(n_samples, window_length_samples, keep_partial_window)
+n_full_windows = floor(n_samples / window_length_samples);
+has_partial = mod(n_samples, window_length_samples) > 0;
+n_windows = n_full_windows;
+if keep_partial_window
+    n_windows = n_windows + double(has_partial);
+end
+end
+
+
+function counts_by_window = accumulate_window_counts( ...
+    centers, codes, state_codes, n_states, n_windows, window_length_samples, total_samples, keep_partial_window)
+counts_by_window = zeros(n_windows, n_states);
+if isempty(centers) || n_windows == 0
+    return;
+end
+
+max_valid_sample = n_windows * window_length_samples;
+if keep_partial_window
+    max_valid_sample = total_samples;
+end
+
+valid_event = centers >= 1 & centers <= max_valid_sample;
+centers = centers(valid_event);
+codes = codes(valid_event);
+if isempty(centers)
+    return;
+end
+
+window_idx = ceil(centers / window_length_samples);
+for s = 1:n_states
+    counts_by_window(:, s) = accumarray( ...
+        window_idx(codes == state_codes(s)), 1, [n_windows, 1], @sum, 0);
+end
+end
+
+
+function top_windows_table = rank_state_diverse_windows(window_table, top_k)
+if isempty(window_table)
+    top_windows_table = table();
+    return;
+end
+
+positive_mask = window_table.total_state_window_count > 0;
+ranked_table = window_table(positive_mask, :);
+if isempty(ranked_table)
+    top_windows_table = table();
+    return;
+end
+
+ranked_table = sortrows(ranked_table, ...
+    {'active_state_richness', 'normalized_state_entropy', 'total_state_window_count', 'labeled_fraction', 'state_entropy'}, ...
+    {'descend', 'descend', 'descend', 'descend', 'descend'});
+
+top_windows_table = ranked_table(1:min(top_k, height(ranked_table)), :);
+top_windows_table.state_diversity_rank = transpose(1:height(top_windows_table));
+top_windows_table = movevars(top_windows_table, 'state_diversity_rank', 'Before', 1);
 end
 
 
@@ -454,7 +495,7 @@ if ~tf
     return;
 end
 
-tf = file_signature_matches(W.source_consensus_file_signature, source_consensus_file_signature);
+tf = io_utils.file_signature_matches(W.source_consensus_file_signature, source_consensus_file_signature);
 end
 
 

@@ -20,17 +20,19 @@ cfg = cfg_E10gb1();
 cfg.spectrogram.pad_sec = 20;
 cfg.spectrogram.pad_mode = 'mirror';
 
-output_root = get_project_processed_root();
+output_root = io_project.get_project_processed_root();
 
 fprintf('Running preprocessing for %s\n', cfg.dataset_id);
 fprintf('Raw data root:\n  %s\n', cfg.raw_data_root);
 fprintf('Output root:\n  %s\n', output_root);
 
-D = load_blp_dataset(cfg);
+D = io_raw.load_blp_dataset(cfg);
 fprintf('Loaded concatenated raw data: [%d, %d]\n', size(D.data, 1), size(D.data, 2));
 
-S = compute_blp_region_spectrograms(D, cfg, output_root);
-fprintf('Saved/loaded region-mean spectrogram with abs size [%d, %d, %d]\n', ...
+spec_opts = struct();
+spec_opts.return_data = true;
+S = compute_blp_region_spectrograms_streamed(D, cfg, output_root, spec_opts);
+fprintf('Prepared region-mean spectrogram with abs size [%d, %d, %d]\n', ...
     size(S.tmpall_mean_abs, 1), size(S.tmpall_mean_abs, 2), size(S.tmpall_mean_abs, 3));
 
 params = struct();

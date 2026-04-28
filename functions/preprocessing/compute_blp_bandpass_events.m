@@ -23,7 +23,7 @@ function R = compute_blp_bandpass_events(D, cfg, output_root, params)
 %     event windows never cross session borders.
 
 if nargin < 3 || isempty(output_root)
-    output_root = get_project_processed_root();
+    output_root = io_project.get_project_processed_root();
 end
 
 if nargin < 4
@@ -110,6 +110,7 @@ end
 state_var_raw = transpose(double(D.data));  % channel x time
 [state_var_detector, normalization_info] = apply_input_normalization(state_var_raw, params);
 
+% Run one detector pass per band/channel pair.
 DetectResults = cell(n_bands, n_channels);
 
 for n_band = 1:n_bands
@@ -118,96 +119,16 @@ for n_band = 1:n_bands
     filtered_band = transpose(double(filtered_band));
 
     for n_channel = 1:n_channels
-        trace_all = filtered_band(n_channel, :);
+        channel_result = detect_one_band_channel( ...
+            filtered_band(n_channel, :), ...
+            state_var_raw(n_channel, :), ...
+            state_var_detector(n_channel, :), ...
+            D, params, n_band);
 
-        threshold = mean(trace_all, 'omitnan') + ...
-            params.ThresRatio_range(n_band) * std(trace_all, 0, 'omitnan');
-
-        loc_pooled = zeros(0, 1);
-
-        event_data = {};
-        event_data_detector_input = {};
-        event_win = zeros(0, 2);
-        event_win_session_local = zeros(0, 2);
-        event_session_idx = zeros(0, 1);
-        event_session_id = zeros(0, 1);
-        loc_peak = zeros(0, 1);
-
-        for k = 1:n_sessions
-            idx1 = D.session_start_idx(k);
-            idx2 = D.session_end_idx(k);
-
-            trace_session = trace_all(idx1:idx2);
-            loc_session = find(trace_session > threshold);
-
-            if ~isempty(loc_session)
-                loc_session(1) = [];
-            end
-
-            if isempty(loc_session)
-                continue;
-            end
-
-            loc_pooled = [loc_pooled; idx1 + loc_session(:) - 1]; %#ok<AGROW>
-            loc_peak_local = find_peak_loc(trace_session, loc_session, params.L_extract_range(n_band));
-
-            for i_peak = 1:numel(loc_peak_local)
-                peak_local = loc_peak_local(i_peak);
-                win_start_local = peak_local - params.L_start_range(n_band) + 1;
-                win_end_local = win_start_local + params.L_extract_range(n_band) - 1;
-
-                if win_start_local < 1 || win_end_local > numel(trace_session)
-                    continue;
-                end
-
-                peak_global = idx1 + peak_local - 1;
-                win_start_global = idx1 + win_start_local - 1;
-                win_end_global = idx1 + win_end_local - 1;
-
-                loc_peak(end+1, 1) = peak_global;
-                event_win(end+1, :) = [win_start_global, win_end_global];
-                event_win_session_local(end+1, :) = [win_start_local, win_end_local];
-                event_session_idx(end+1, 1) = k;
-                event_session_id(end+1, 1) = D.session_ids(k);
-                event_data{end+1, 1} = state_var_raw(n_channel, win_start_global:win_end_global); %#ok<AGROW>
-                event_data_detector_input{end+1, 1} = ...
-                    state_var_detector(n_channel, win_start_global:win_end_global); %#ok<AGROW>
-            end
-        end
-
-        out = struct();
-        out.loc_pooled = loc_pooled;
-        out.loc_peak = loc_peak;
-        out.event_data = event_data;
-        out.event_data_raw = event_data;
-        out.event_data_detector_input = event_data_detector_input;
-        out.event_win = event_win;
-        out.event_win_session_local = event_win_session_local;
-        out.event_session_idx = event_session_idx;
-        out.event_session_id = event_session_id;
-        out.L_total = n_time;
-        out.dx = dx_ref;
-        out.dx_source = dx_source;
-        out.Fs = Fs;
-        out.threshold = threshold;
-        out.bandpass_hz = params.passband(n_band, :);
-        out.input_normalization = normalization_info.mode;
-        out.input_channel_mean = normalization_info.channel_mean(n_channel);
-        out.input_channel_std = normalization_info.channel_std(n_channel);
-        out.band_index = n_band;
-        out.band_label = params.band_labels{n_band};
-        out.channel_col = n_channel;
-        out.selected_channel = D.selected_channels(n_channel);
-        out.channel_site = channel_sites{n_channel};
-        out.region_idx = channel_region_idx(n_channel);
-        out.region_label = regions{channel_region_idx(n_channel)};
-        out.session_ids = D.session_ids;
-        out.session_dx = D.session_dx;
-        out.session_start_idx = D.session_start_idx;
-        out.session_end_idx = D.session_end_idx;
-        out.params = params;
-
-        DetectResults{n_band, n_channel} = out;
+        DetectResults{n_band, n_channel} = pack_detect_result( ...
+            channel_result, D, params, normalization_info, ...
+            n_band, n_channel, dx_ref, dx_source, Fs, n_time, ...
+            channel_sites, channel_region_idx, regions);
     end
 end
 
@@ -236,6 +157,95 @@ R.input_channel_std = normalization_info.channel_std;
 R.input_normalization_notes = normalization_info.notes;
 
 save(save_file, 'R', '-v7.3');
+end
+
+function out = detect_one_band_channel(trace_all, trace_raw, trace_detector, D, params, n_band)
+% Detect one band/channel pair without crossing session borders.
+
+threshold = mean(trace_all, 'omitnan') + ...
+    params.ThresRatio_range(n_band) * std(trace_all, 0, 'omitnan');
+
+out = struct();
+out.threshold = threshold;
+out.loc_pooled = zeros(0, 1);
+out.loc_peak = zeros(0, 1);
+out.event_data = {};
+out.event_data_detector_input = {};
+out.event_win = zeros(0, 2);
+out.event_win_session_local = zeros(0, 2);
+out.event_session_idx = zeros(0, 1);
+out.event_session_id = zeros(0, 1);
+
+for k = 1:numel(D.session_ids)
+    idx1 = D.session_start_idx(k);
+    idx2 = D.session_end_idx(k);
+
+    trace_session = trace_all(idx1:idx2);
+    loc_session = find(trace_session > threshold);
+
+    if ~isempty(loc_session)
+        loc_session(1) = [];
+    end
+
+    if isempty(loc_session)
+        continue;
+    end
+
+    out.loc_pooled = [out.loc_pooled; idx1 + loc_session(:) - 1]; %#ok<AGROW>
+    loc_peak_local = find_peak_loc(trace_session, loc_session, params.L_extract_range(n_band));
+
+    for i_peak = 1:numel(loc_peak_local)
+        peak_local = loc_peak_local(i_peak);
+        win_start_local = peak_local - params.L_start_range(n_band) + 1;
+        win_end_local = win_start_local + params.L_extract_range(n_band) - 1;
+
+        if win_start_local < 1 || win_end_local > numel(trace_session)
+            continue;
+        end
+
+        peak_global = idx1 + peak_local - 1;
+        win_start_global = idx1 + win_start_local - 1;
+        win_end_global = idx1 + win_end_local - 1;
+
+        out.loc_peak(end+1, 1) = peak_global;
+        out.event_win(end+1, :) = [win_start_global, win_end_global];
+        out.event_win_session_local(end+1, :) = [win_start_local, win_end_local];
+        out.event_session_idx(end+1, 1) = k;
+        out.event_session_id(end+1, 1) = D.session_ids(k);
+        out.event_data{end+1, 1} = trace_raw(win_start_global:win_end_global); %#ok<AGROW>
+        out.event_data_detector_input{end+1, 1} = ...
+            trace_detector(win_start_global:win_end_global); %#ok<AGROW>
+    end
+end
+end
+
+function out = pack_detect_result(channel_result, D, params, normalization_info, ...
+    n_band, n_channel, dx_ref, dx_source, Fs, n_time, ...
+    channel_sites, channel_region_idx, regions)
+% Attach metadata to one detected band/channel result.
+
+out = channel_result;
+out.event_data_raw = channel_result.event_data;
+out.L_total = n_time;
+out.dx = dx_ref;
+out.dx_source = dx_source;
+out.Fs = Fs;
+out.bandpass_hz = params.passband(n_band, :);
+out.input_normalization = normalization_info.mode;
+out.input_channel_mean = normalization_info.channel_mean(n_channel);
+out.input_channel_std = normalization_info.channel_std(n_channel);
+out.band_index = n_band;
+out.band_label = params.band_labels{n_band};
+out.channel_col = n_channel;
+out.selected_channel = D.selected_channels(n_channel);
+out.channel_site = channel_sites{n_channel};
+out.region_idx = channel_region_idx(n_channel);
+out.region_label = regions{channel_region_idx(n_channel)};
+out.session_ids = D.session_ids;
+out.session_dx = D.session_dx;
+out.session_start_idx = D.session_start_idx;
+out.session_end_idx = D.session_end_idx;
+out.params = params;
 end
 
 function params = apply_default_params(params)

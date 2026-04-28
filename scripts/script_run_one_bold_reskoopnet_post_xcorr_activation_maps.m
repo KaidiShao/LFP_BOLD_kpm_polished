@@ -28,7 +28,7 @@ roi_ts_mat = fullfile('E:\DataPons', dataset_id, 'roits', ...
 density_sources = struct([]);
 density_sources(1).name = 'blp_event_density';
 density_sources(1).type = 'event_density';
-density_sources(1).file = fullfile(get_project_processed_root(), ...
+density_sources(1).file = fullfile(io_project.get_project_processed_root(), ...
     dataset_stem, 'event_density', sprintf('%s_event_density_2s.mat', dataset_stem));
 
 % Optional: add threshold/dimred density files or manifests here.
@@ -50,7 +50,7 @@ if exist(result_dir, 'dir') ~= 7
 end
 
 [~, run_name] = fileparts(result_dir);
-out_root = fullfile(get_project_processed_root(), dataset_stem, ...
+out_root = fullfile(io_project.get_project_processed_root(), dataset_stem, ...
     'bold_reskoopnet_single_run_analysis', run_name);
 mat_dir = fullfile(out_root, 'mat');
 fig_dir = fullfile(out_root, 'fig');
@@ -70,7 +70,7 @@ source_cfg.concat.concat_fields = {'efuns'};
 source_cfg.concat.scan_mode = 'uniform_except_last';
 source_cfg.concat.verbose = true;
 
-[EDMD_outputs, concat_info, source_info] = load_edmd_source(source_cfg);
+[EDMD_outputs, concat_info, source_info] = io_edmd.load_edmd_source(source_cfg);
 Obs = load(observable_mat);
 
 session = local_session_from_observable(Obs, size(EDMD_outputs.efuns, 1));

@@ -315,7 +315,7 @@ dataset_stem = local_get_field(B.run_info, 'dataset_stem', '');
 if isempty(dataset_stem)
     return;
 end
-processed_root = get_project_processed_root();
+processed_root = io_project.get_project_processed_root();
 event_file = fullfile(processed_root, dataset_stem, 'event_density', ...
     sprintf('%s_event_density_2s.mat', dataset_stem));
 if exist(event_file, 'file') == 2

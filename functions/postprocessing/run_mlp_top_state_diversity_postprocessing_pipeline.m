@@ -225,7 +225,7 @@ if ~isfield(params, 'autodl_root') || isempty(params.autodl_root)
 end
 
 if ~isfield(params, 'processed_root') || isempty(params.processed_root)
-    params.processed_root = get_project_processed_root();
+    params.processed_root = io_project.get_project_processed_root();
 end
 
 if ~isfield(params, 'output_folder_name') || isempty(params.output_folder_name)
@@ -559,7 +559,7 @@ window_file = fullfile(params.processed_root, cfg.file_stem, ...
 if exist(window_file, 'file') ~= 2
     fprintf('State-diversity window file missing; computing it:\n  %s\n', window_file);
     loader_cfg = struct('file_stem', cfg.file_stem);
-    [C, source_consensus_file] = load_consensus_state_results(loader_cfg, params.processed_root, []);
+    [C, source_consensus_file] = io_results.load_consensus_state_results(loader_cfg, params.processed_root, []);
     win_params = struct();
     win_params.window_length_samples = params.window_length_samples;
     win_params.window_mode = params.window_mode;

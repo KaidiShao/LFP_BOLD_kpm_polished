@@ -17,7 +17,7 @@ set(groot, 'defaultFigureVisible', 'off');
 
 params = struct();
 params.autodl_root = 'E:\autodl_results';
-params.processed_root = get_project_processed_root();
+params.processed_root = io_project.get_project_processed_root();
 
 % Empty dataset_stems means: discover every dataset folder under autodl_root.
 % Set this to e.g. {'e10fV1','e10gb1','e10gh1'} to restrict the run.

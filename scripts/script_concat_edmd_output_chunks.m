@@ -24,7 +24,7 @@ params.progress_every = 50;
 % Psi_Y, add them here:
 % params.concat_fields = {'efuns', 'Psi_X', 'Psi_Y'};
 
-[EDMD_outputs, concat_info] = load_and_concat_edmd_output_chunks(data_dir, params);
+[EDMD_outputs, concat_info] = io_edmd.load_and_concat_edmd_output_chunks(data_dir, params);
 
 % if exist(save_dir, 'dir') ~= 7
 %     mkdir(save_dir);

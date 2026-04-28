@@ -10,8 +10,8 @@ clc;
 project_root = fileparts(fileparts(mfilename('fullpath')));
 addpath(genpath(project_root));
 
-input_root = fullfile(get_project_processed_root(), 'bold_observables');
-output_root = fullfile(get_project_processed_root(), 'bold_observables_qc');
+input_root = fullfile(io_project.get_project_processed_root(), 'bold_observables');
+output_root = fullfile(io_project.get_project_processed_root(), 'bold_observables_qc');
 
 dataset_ids = {'E10.gb1', 'E10.gH1', 'E10.fV1', 'F12.m01'};
 processed_dataset_dirs = {'e10gb1', 'e10gh1', 'e10fV1', 'f12m01'};
@@ -53,7 +53,7 @@ for i_dataset = 1:numel(dataset_ids)
             info.n_samples, info.n_variables);
         fprintf('  Saved: %s\n', strjoin(cellstr(info.output_files), sprintf('\n         ')));
 
-        dataset_qc_dir = fullfile(get_project_processed_root(), ...
+        dataset_qc_dir = fullfile(io_project.get_project_processed_root(), ...
             processed_dataset_dirs{i_dataset}, 'bold_observables_qc', mode_name);
         copied_files = copy_qc_files(info.output_files, dataset_qc_dir);
         fprintf('  Copied to dataset folder: %s\n', strjoin(cellstr(copied_files), sprintf('\n                            ')));

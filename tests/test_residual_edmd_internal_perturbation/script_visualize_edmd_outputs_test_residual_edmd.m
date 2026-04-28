@@ -191,7 +191,7 @@ function [EDMD_outputs, concat_info, source_info] = local_load_edmd_source(sourc
 switch lower(source_cfg.mode)
     case 'chunk_dir'
         fprintf('Loading EDMD outputs directly from chunk directory:\n  %s\n', source_cfg.data_dir);
-        [EDMD_outputs, concat_info] = load_and_concat_edmd_output_chunks( ...
+        [EDMD_outputs, concat_info] = io_edmd.load_and_concat_edmd_output_chunks( ...
             source_cfg.data_dir, source_cfg.concat);
         source_info = struct();
         source_info.mode = 'chunk_dir';
