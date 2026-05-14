@@ -60,7 +60,8 @@ params_block = build_blp_consensus_state_pipeline_params(struct('plot_params', p
 params = params_block.plot_params;
 
 if ~isfield(params, 'save_dir') || isempty(params.save_dir)
-    params.save_dir = fullfile(output_root, cfg.file_stem, 'event_diversity_windows', 'top_window_plots');
+    params.save_dir = io_project.get_pipeline_stage_dir( ...
+        output_root, cfg, 2, 'figures_event_diversity_top_window_plots');
 end
 
 if ~isfield(params, 'show_consensus')

@@ -18,133 +18,19 @@ end
 if nargin < 3 || isempty(params)
     params = struct();
 end
-params = local_apply_defaults(params);
-
-B = local_load_bold_post(bold_post_input);
-[session, dt, T] = local_resolve_bold_session(B);
-params.dt_current = dt;
-[feature_specs, bold_feature_mats] = local_build_bold_features(B, params);
-
-max_lag_bins = round(params.max_lag_sec / dt);
-border_pad_bins = round(params.border_mask_sec / dt);
-lag_bins = (-max_lag_bins:max_lag_bins).';
-lag_sec = lag_bins * dt;
-session_id_by_sample = local_session_id_vector(T, session);
-base_mask = local_border_mask(T, session, border_pad_bins);
-
-if isempty(density_sources)
-    density_sources = local_default_density_sources(B);
-end
-density_sources = local_normalize_density_sources(density_sources);
-
-all_rows = {};
-source_results = {};
-
-for i_src = 1:numel(density_sources)
-    source = density_sources{i_src};
-    candidates = local_load_density_candidates(source, params);
-    if isempty(candidates)
-        warning('No density candidates loaded for source %s.', source.name);
-        continue;
-    end
-
-    best_abs = -Inf;
-    best_source = [];
-    best_candidate_idx = NaN;
-    best_feature_idx = NaN;
-    best_maps = [];
-
-    for i_cand = 1:numel(candidates)
-        cand = local_align_density_candidate(local_get_cell_or_array_item(candidates, i_cand), B, T, dt);
-
-        for i_feat = 1:numel(feature_specs)
-            maps = local_lagged_corr_maps(cand.X, bold_feature_mats{i_feat}, ...
-                lag_bins, session_id_by_sample, base_mask, params);
-            current_best = local_nanmax(maps.peak_abs_corr(:));
-            if current_best > best_abs
-                best_abs = current_best;
-                best_source = cand;
-                best_candidate_idx = i_cand;
-                best_feature_idx = i_feat;
-                best_maps = maps;
-            end
-        end
-    end
-
-    if isempty(best_source)
-        continue;
-    end
-
-    source_result = struct();
-    source_result.source = source;
-    source_result.best_candidate = best_source;
-    source_result.best_candidate_idx = best_candidate_idx;
-    source_result.best_feature = feature_specs{best_feature_idx};
-    source_result.best_bold_matrix = bold_feature_mats{best_feature_idx};
-    source_result.best_maps = best_maps;
-    source_result.lag_bins = lag_bins;
-    source_result.lag_sec = lag_sec;
-    source_result.positive_lag_definition = 'density leads BOLD';
-    source_results{end + 1, 1} = source_result; %#ok<AGROW>
-
-    rows_i = local_build_peak_rows(source_result, feature_specs{best_feature_idx});
-    all_rows = [all_rows; rows_i]; %#ok<AGROW>
+params = apply_bold_efun_density_cross_correlation_defaults(params);
+ctx = prepare_bold_efun_density_cross_correlation_context( ...
+    bold_post_input, density_sources, params);
+stats = compute_bold_efun_density_cross_correlation_source_results(ctx);
+out = build_bold_efun_density_cross_correlation_output(ctx, stats);
+out = publish_bold_efun_density_cross_correlation_output(out, params);
 end
 
-peak_table = local_rows_to_table(all_rows);
-if ~isempty(peak_table)
-    finite_peak = isfinite(peak_table.peak_abs_corr);
-    peak_table = [ ...
-        sortrows(peak_table(finite_peak, :), 'peak_abs_corr', 'descend'); ...
-        peak_table(~finite_peak, :)];
-end
-if isempty(peak_table)
-    top_table = peak_table;
-else
-    top_table = peak_table(1:min(height(peak_table), params.top_n), :);
-end
-
-out = struct();
-out.created_at = char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
-out.bold_post_file = local_get_field(B, 'source_file', '');
-out.params = params;
-out.dt = dt;
-out.T = T;
-out.session = session;
-out.max_lag_bins = max_lag_bins;
-out.border_pad_bins = border_pad_bins;
-out.border_mask = base_mask;
-out.lag_bins = lag_bins;
-out.lag_sec = lag_sec;
-out.positive_lag_definition = 'density leads BOLD';
-out.feature_specs = feature_specs;
-out.density_sources = density_sources;
-out.source_results = source_results;
-out.peak_table = peak_table;
-out.top_table = top_table;
-
-if params.save_results
-    if exist(params.save_dir, 'dir') ~= 7
-        mkdir(params.save_dir);
-    end
-    save_file = fullfile(params.save_dir, [params.save_tag, '.mat']);
-    csv_file = fullfile(params.save_dir, [params.save_tag, '_peaks.csv']);
-    top_csv_file = fullfile(params.save_dir, [params.save_tag, '_top.csv']);
-    save(save_file, 'out', '-v7.3');
-    if ~isempty(peak_table), writetable(peak_table, csv_file); end
-    if ~isempty(top_table), writetable(top_table, top_csv_file); end
-    out.save_paths = struct('mat_file', save_file, ...
-        'peak_csv', csv_file, 'top_csv', top_csv_file);
-end
-
-if params.make_figures
-    out.figure_paths = plot_bold_efun_density_cross_correlation_summary(out, params.plot);
-end
-end
-
+% Legacy in-file helpers below are kept only as parked historical context.
+% The canonical pipeline 8 path now delegates to staged helper functions above.
 
 function params = local_apply_defaults(params)
-params = local_set_default(params, 'max_lag_sec', 120);
+params = local_set_default(params, 'max_lag_sec', 10);
 params = local_set_default(params, 'border_mask_sec', params.max_lag_sec);
 params = local_set_default(params, 'min_valid_samples', 20);
 params = local_set_default(params, 'top_n', 5);
@@ -157,8 +43,10 @@ params = local_set_default(params, 'density_transform', 'zscore');
 params = local_set_default(params, 'bold_transform', 'zscore');
 params = local_set_default(params, 'save_results', true);
 params = local_set_default(params, 'save_dir', pwd);
-params = local_set_default(params, 'save_tag', 'bold_efun_density_xcorr');
+params = local_set_default(params, 'save_tag', 'xcorr');
 params = local_set_default(params, 'make_figures', true);
+params = local_set_default(params, 'export_combined', true);
+params = local_set_default(params, 'export_by_density', true);
 if ~isfield(params, 'plot') || isempty(params.plot)
     params.plot = struct();
 end
@@ -316,7 +204,8 @@ if isempty(dataset_stem)
     return;
 end
 processed_root = io_project.get_project_processed_root();
-event_file = fullfile(processed_root, dataset_stem, 'event_density', ...
+event_file = fullfile( ...
+    io_project.get_pipeline_stage_dir(processed_root, dataset_stem, 2, 'event_density'), ...
     sprintf('%s_event_density_2s.mat', dataset_stem));
 if exist(event_file, 'file') == 2
     source = struct();
@@ -635,6 +524,148 @@ for i_den = 1:n_density
     end
 end
 rows = rows(1:k, :);
+end
+
+
+function T = local_sort_peak_table(T)
+if isempty(T)
+    return;
+end
+finite_peak = isfinite(T.peak_abs_corr);
+T = [ ...
+    sortrows(T(finite_peak, :), 'peak_abs_corr', 'descend'); ...
+    T(~finite_peak, :)];
+end
+
+
+function [peak_by_density, top_by_density, density_names, field_names] = ...
+        local_build_density_group_tables(peak_table, top_n)
+peak_by_density = struct();
+top_by_density = struct();
+density_names = {};
+field_names = {};
+if isempty(peak_table) || ~ismember('density_name', peak_table.Properties.VariableNames)
+    return;
+end
+
+all_names = cellstr(string(peak_table.density_name));
+[density_names, ~] = unique(all_names, 'stable');
+if isempty(density_names)
+    density_names = {};
+    return;
+end
+density_names = density_names(:).';
+field_names = cell(size(density_names));
+for i_group = 1:numel(density_names)
+    density_name = density_names{i_group};
+    field_name = local_density_group_field_name(density_name);
+    mask = strcmp(all_names, density_name);
+    peak_table_i = local_sort_peak_table(peak_table(mask, :));
+    if isempty(peak_table_i)
+        top_table_i = peak_table_i;
+    else
+        top_table_i = peak_table_i(1:min(height(peak_table_i), top_n), :);
+    end
+    peak_by_density.(field_name) = peak_table_i;
+    top_by_density.(field_name) = top_table_i;
+    field_names{i_group} = field_name;
+end
+end
+
+
+function field_name = local_density_group_field_name(name)
+field_name = char(matlab.lang.makeValidName(char(string(name))));
+if isempty(field_name)
+    field_name = 'density_group';
+end
+end
+
+
+function label = local_output_mode_label(params)
+if params.export_combined && params.export_by_density
+    label = 'both';
+elseif params.export_combined
+    label = 'combined';
+elseif params.export_by_density
+    label = 'separate';
+else
+    label = 'none';
+end
+end
+
+
+function figure_paths_by_density = local_plot_density_group_figures( ...
+        out, density_group_names, density_group_fields, params)
+figure_paths_by_density = repmat(struct( ...
+    'density_name', '', ...
+    'field_name', '', ...
+    'summary_png', '', ...
+    'top_curves_png', '', ...
+    'top_overlay_png', ''), numel(density_group_names), 1);
+if isempty(density_group_names)
+    return;
+end
+
+plot_dir = fullfile(params.save_dir, 'by_density');
+if exist(plot_dir, 'dir') ~= 7
+    mkdir(plot_dir);
+end
+
+for i_group = 1:numel(density_group_names)
+    density_name = density_group_names{i_group};
+    field_name = density_group_fields{i_group};
+    out_i = local_make_density_group_out(out, density_name, field_name);
+    plot_params = params.plot;
+    plot_params.save_dir = plot_dir;
+    plot_params.save_tag = sprintf('%s__%s', params.save_tag, field_name);
+    paths_i = plot_bold_efun_density_cross_correlation_summary(out_i, plot_params);
+    figure_paths_by_density(i_group).density_name = density_name;
+    figure_paths_by_density(i_group).field_name = field_name;
+    figure_paths_by_density(i_group).summary_png = paths_i.summary_png;
+    figure_paths_by_density(i_group).top_curves_png = paths_i.top_curves_png;
+    figure_paths_by_density(i_group).top_overlay_png = paths_i.top_overlay_png;
+end
+end
+
+
+function out_i = local_make_density_group_out(out, density_name, field_name)
+out_i = out;
+if isfield(out, 'peak_table_by_density') && isstruct(out.peak_table_by_density) && ...
+        isfield(out.peak_table_by_density, field_name)
+    out_i.peak_table = out.peak_table_by_density.(field_name);
+else
+    mask = strcmp(cellstr(string(out.peak_table.density_name)), density_name);
+    out_i.peak_table = out.peak_table(mask, :);
+end
+if isfield(out, 'top_table_by_density') && isstruct(out.top_table_by_density) && ...
+        isfield(out.top_table_by_density, field_name)
+    out_i.top_table = out.top_table_by_density.(field_name);
+else
+    out_i.top_table = out_i.peak_table(1:min(height(out_i.peak_table), out.params.top_n), :);
+end
+out_i.source_results = local_filter_source_results_by_density(out.source_results, density_name);
+end
+
+
+function source_results = local_filter_source_results_by_density(source_results_in, density_name)
+if isempty(source_results_in)
+    source_results = source_results_in;
+    return;
+end
+
+if iscell(source_results_in)
+    keep = false(size(source_results_in));
+    for i = 1:numel(source_results_in)
+        keep(i) = strcmp(string(source_results_in{i}.best_candidate.name), string(density_name));
+    end
+    source_results = source_results_in(keep);
+else
+    keep = false(size(source_results_in));
+    for i = 1:numel(source_results_in)
+        keep(i) = strcmp(string(source_results_in(i).best_candidate.name), string(density_name));
+    end
+    source_results = source_results_in(keep);
+end
 end
 
 

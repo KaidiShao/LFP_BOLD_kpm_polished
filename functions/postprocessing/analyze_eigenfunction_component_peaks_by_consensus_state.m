@@ -217,14 +217,35 @@ end
 
 
 function save_dir = local_default_save_dir(result)
+output_root = io_project.get_project_processed_root();
+cfg_or_stem = '';
+
+if isfield(result, 'cfg') && isfield(result.cfg, 'file_stem') && ~isempty(result.cfg.file_stem)
+    cfg_or_stem = result.cfg;
+elseif isfield(result, 'cfg') && isfield(result.cfg, 'dataset') && ...
+        isfield(result.cfg.dataset, 'name') && ~isempty(result.cfg.dataset.name)
+    cfg_or_stem = char(string(result.cfg.dataset.name));
+end
+
 if isfield(result, 'cfg') && isfield(result.cfg, 'output') && ...
         isfield(result.cfg.output, 'root') && ~isempty(result.cfg.output.root)
-    save_dir = fullfile(result.cfg.output.root, 'peaks');
+    output_root = result.cfg.output.root;
+elseif isfield(result, 'cfg') && isfield(result.cfg, 'dataset') && ...
+        isfield(result.cfg.dataset, 'processed_root') && ...
+        ~isempty(result.cfg.dataset.processed_root)
+    output_root = result.cfg.dataset.processed_root;
+end
+
+if ~isempty(cfg_or_stem)
+    save_dir = io_project.get_pipeline_stage_dir( ...
+        output_root, cfg_or_stem, 5, 'eigenfunction_peaks_by_state');
 elseif isfield(result, 'cfg') && isfield(result.cfg, 'save') && ...
         isfield(result.cfg.save, 'dir') && ~isempty(result.cfg.save.dir)
-    save_dir = fullfile(fileparts(result.cfg.save.dir), 'peaks');
+    save_dir = fullfile(fileparts(result.cfg.save.dir), ...
+        io_project.get_pipeline_stage_name(5, 'eigenfunction_peaks_by_state'));
 else
-    save_dir = fullfile(pwd, 'peaks');
+    save_dir = fullfile(pwd, io_project.get_pipeline_stage_name( ...
+        5, 'eigenfunction_peaks_by_state'));
 end
 end
 

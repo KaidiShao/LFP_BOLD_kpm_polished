@@ -11,7 +11,7 @@ end
 
 paths = struct('summary_png', '', 'top_curves_png', '', 'top_overlay_png', '');
 
-fig = figure('Color', 'w', 'Position', [80, 80, 1500, 820]);
+fig = figure('Color', 'w', 'Position', [80, 80, 1700, 900]);
 tiledlayout(fig, 1, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
 
 T = out.peak_table;
@@ -31,17 +31,18 @@ end
 sgtitle(sprintf('BOLD eigenfunction vs density cross-correlation | positive lag: %s', ...
     out.positive_lag_definition), 'Interpreter', 'none');
 paths.summary_png = fullfile(params.save_dir, [params.save_tag, '_summary.png']);
-exportgraphics(fig, paths.summary_png, 'Resolution', params.resolution);
+local_export_png(fig, paths.summary_png, params.resolution);
 
-fig2 = figure('Color', 'w', 'Position', [100, 80, 1400, 900]);
+fig2 = figure('Color', 'w', 'Position', [100, 80, 1800, 1000]);
 local_plot_top_lag_curves(out, params.top_n);
 paths.top_curves_png = fullfile(params.save_dir, [params.save_tag, '_top_lag_curves.png']);
-exportgraphics(fig2, paths.top_curves_png, 'Resolution', params.resolution);
+local_export_png(fig2, paths.top_curves_png, params.resolution);
 
-fig3 = figure('Color', 'w', 'Position', [120, 80, 1500, 950]);
+overlay_height = max(1300, 260 * max(1, params.top_n));
+fig3 = figure('Color', 'w', 'Position', [120, 80, 2100, overlay_height]);
 local_plot_top_signal_overlays(out, params.top_n);
 paths.top_overlay_png = fullfile(params.save_dir, [params.save_tag, '_top_signal_overlay.png']);
-exportgraphics(fig3, paths.top_overlay_png, 'Resolution', params.resolution);
+local_export_png(fig3, paths.top_overlay_png, params.resolution);
 
 if params.close_figures
     close(fig);
@@ -158,30 +159,112 @@ for i = 1:height(Tf)
     bold = sr.best_bold_matrix(:, m);
     lag_bins = round(Tf.peak_lag_sec(i) / out.dt);
 
-    if lag_bins > 0
-        ix = 1:(numel(t) - lag_bins);
-        iy = (1 + lag_bins):numel(t);
-    elseif lag_bins < 0
-        a = -lag_bins;
-        ix = (1 + a):numel(t);
-        iy = 1:(numel(t) - a);
+    [ix, iy] = local_lag_indices(numel(t), lag_bins);
+    valid_pair = local_valid_lag_pair(out, ix, iy, density, bold);
+    density_plot = density(ix);
+    bold_plot = bold(iy);
+    density_plot(~valid_pair) = NaN;
+    bold_plot(~valid_pair) = NaN;
+
+    if Tf.peak_corr(i) < 0
+        bold_plot = -bold_plot;
+        bold_label = '-BOLD(t+lag)';
+        flip_note = ' | BOLD sign flipped for display';
     else
-        ix = 1:numel(t);
-        iy = ix;
+        bold_label = 'BOLD(t+lag)';
+        flip_note = '';
     end
 
-    plot(t(ix), density(ix), 'Color', [0.1 0.35 0.75], 'LineWidth', 1.0);
+    plot(t(ix), density_plot, 'Color', [0.1 0.35 0.75], 'LineWidth', 1.0);
     hold on;
-    plot(t(ix), bold(iy), 'Color', [0.75 0.2 0.1], 'LineWidth', 1.0);
+    plot(t(ix), bold_plot, 'Color', [0.75 0.2 0.1], 'LineWidth', 1.0);
+    local_draw_session_borders(out);
     yline(0, 'k-');
     grid on;
     xlabel('Time (s)');
     ylabel('z-score');
-    title(sprintf('%s | %s | density %d / BOLD mode %d | corr %.3f | lag %.1fs', ...
+    title(sprintf('%s | %s | density %d / BOLD mode %d | corr %.3f | lag %.1fs%s', ...
         char(Tf.density_name(i)), char(Tf.bold_feature(i)), d, m, ...
-        Tf.peak_corr(i), Tf.peak_lag_sec(i)), 'Interpreter', 'none');
-    legend({'density(t)', 'BOLD(t+lag)'}, 'Location', 'eastoutside');
+        Tf.peak_corr(i), Tf.peak_lag_sec(i), flip_note), 'Interpreter', 'none');
+    legend({'density(t)', bold_label}, 'Location', 'eastoutside');
     hold off;
+end
+end
+
+
+function [ix, iy] = local_lag_indices(n, lag_bins)
+if lag_bins > 0
+    ix = (1:(n - lag_bins)).';
+    iy = ((1 + lag_bins):n).';
+elseif lag_bins < 0
+    a = -lag_bins;
+    ix = ((1 + a):n).';
+    iy = (1:(n - a)).';
+else
+    ix = (1:n).';
+    iy = ix;
+end
+end
+
+
+function valid_pair = local_valid_lag_pair(out, ix, iy, density, bold)
+base_mask = true(out.T, 1);
+if isfield(out, 'border_mask') && ~isempty(out.border_mask)
+    base_mask = logical(out.border_mask(:));
+end
+if isfield(out, 'session')
+    session = out.session;
+else
+    session = struct();
+end
+session_id = local_session_id_vector(out.T, session);
+valid_pair = base_mask(ix) & base_mask(iy) & ...
+    (session_id(ix) == session_id(iy)) & ...
+    isfinite(density(ix)) & isfinite(bold(iy));
+end
+
+
+function local_draw_session_borders(out)
+if ~isfield(out, 'session') || isempty(out.session)
+    return;
+end
+session = out.session;
+border_idx = [];
+if isfield(session, 'border_idx') && ~isempty(session.border_idx)
+    border_idx = double(session.border_idx(:));
+elseif isfield(session, 'session_end_idx') && numel(session.session_end_idx) > 1
+    border_idx = double(session.session_end_idx(1:end-1));
+end
+border_idx = border_idx(isfinite(border_idx) & border_idx >= 1 & border_idx <= out.T);
+for i_border = 1:numel(border_idx)
+    xline((border_idx(i_border) - 1) * out.dt, '--', ...
+        'Color', [0.25 0.25 0.25], 'LineWidth', 0.9, ...
+        'HandleVisibility', 'off');
+end
+end
+
+
+function ids = local_session_id_vector(T, session)
+ids = ones(T, 1);
+if ~isstruct(session) || ~isfield(session, 'session_start_idx') || ...
+        isempty(session.session_start_idx) || ~isfield(session, 'session_end_idx') || ...
+        isempty(session.session_end_idx)
+    return;
+end
+ids(:) = NaN;
+starts = double(session.session_start_idx(:));
+ends = double(session.session_end_idx(:));
+if isfield(session, 'session_ids') && ~isempty(session.session_ids)
+    session_ids = double(session.session_ids(:));
+else
+    session_ids = (1:numel(starts)).';
+end
+for i = 1:numel(starts)
+    a = max(1, starts(i));
+    b = min(T, ends(i));
+    if a <= b
+        ids(a:b) = session_ids(i);
+    end
 end
 end
 
@@ -213,5 +296,39 @@ end
 function S = local_set_default(S, name, value)
 if ~isfield(S, name) || isempty(S.(name))
     S.(name) = value;
+end
+end
+
+
+function local_export_png(fig, png_file, resolution)
+[png_dir, ~, ~] = fileparts(png_file);
+if exist(png_dir, 'dir') ~= 7
+    mkdir(png_dir);
+end
+
+tmp_dir = fullfile(tempdir, 'koopman_png_shortpath');
+if exist(tmp_dir, 'dir') ~= 7
+    mkdir(tmp_dir);
+end
+tmp_png = [tempname(tmp_dir), '.png'];
+cleanup_tmp = onCleanup(@() local_delete_if_exists(tmp_png));
+
+exportgraphics(fig, tmp_png, 'Resolution', resolution);
+[ok, msg] = copyfile(tmp_png, png_file, 'f');
+if ~ok
+    error('plot_bold_xcorr:CopyPngFailed', ...
+        'Unable to copy exported PNG to target path:\n%s\n%s', png_file, msg);
+end
+
+clear cleanup_tmp
+end
+
+
+function local_delete_if_exists(path_in)
+if exist(path_in, 'file') == 2
+    try
+        delete(path_in);
+    catch
+    end
 end
 end

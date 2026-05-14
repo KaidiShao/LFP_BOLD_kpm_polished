@@ -76,6 +76,18 @@ end
 if ~isfield(params, 'center') || isempty(params.center)
     params.center = true;
 end
+if ~isfield(params, 'dedup_by_coords') || isempty(params.dedup_by_coords)
+    params.dedup_by_coords = false;
+end
+if ~isfield(params, 'session_center') || isempty(params.session_center)
+    params.session_center = false;
+end
+if ~isfield(params, 'session_detrend') || isempty(params.session_detrend)
+    params.session_detrend = false;
+end
+if ~isfield(params, 'variable_zscore') || isempty(params.variable_zscore)
+    params.variable_zscore = false;
+end
 if ~isfield(params, 'precision') || isempty(params.precision)
     params.precision = 'single';
 end
@@ -116,27 +128,7 @@ end
 end
 
 function info = build_identity_info(D)
-n_obs = size(D.data, 2);
-observable_idx = (1:n_obs).';
-source = repmat({'bold'}, n_obs, 1);
-
-if isfield(D, 'variable_labels') && numel(D.variable_labels) == n_obs
-    observable_label = cellstr(string(D.variable_labels(:)));
-else
-    observable_label = cellstr(compose("bold_var%04d", observable_idx));
-end
-
-info = table(observable_idx, source, observable_label, ...
-    'VariableNames', {'observable_idx', 'source', 'observable_label'});
-
-if isfield(D, 'variable_info') && height(D.variable_info) == n_obs
-    extra = D.variable_info;
-    duplicate_names = intersect(info.Properties.VariableNames, extra.Properties.VariableNames);
-    if ~isempty(duplicate_names)
-        extra(:, duplicate_names) = [];
-    end
-    info = [info extra];
-end
+info = build_bold_base_observable_info(D, size(D.data, 2), 'bold', '');
 end
 
 function [obs, info] = build_roi_mean_observables(X, D)
@@ -172,6 +164,48 @@ end
 
 function [obs, info, model] = build_svd_observables(X, D, params)
 X = double(X);
+pre_svd = struct();
+pre_svd.original_n_variables = size(X, 2);
+pre_svd.keep_variable_idx = (1:size(X, 2)).';
+pre_svd.dedup_by_coords = logical(params.dedup_by_coords);
+pre_svd.session_center = logical(params.session_center);
+pre_svd.session_detrend = logical(params.session_detrend);
+pre_svd.variable_zscore = logical(params.variable_zscore);
+
+input_variable_labels = {};
+if isfield(D, 'variable_labels')
+    input_variable_labels = D.variable_labels;
+end
+
+if params.dedup_by_coords
+    if ~isfield(D, 'coords') || isempty(D.coords) || size(D.coords, 1) ~= size(X, 2)
+        error('params.dedup_by_coords requires D.coords with one row per input variable.');
+    end
+    [~, keep_idx] = unique(double(D.coords), 'rows', 'stable');
+    keep_idx = keep_idx(:);
+    X = X(:, keep_idx);
+    pre_svd.keep_variable_idx = keep_idx;
+    pre_svd.dedup_removed_variables = pre_svd.original_n_variables - numel(keep_idx);
+    if ~isempty(input_variable_labels)
+        input_variable_labels = input_variable_labels(keep_idx);
+    end
+else
+    pre_svd.dedup_removed_variables = 0;
+end
+
+if params.session_detrend
+    X = apply_session_detrend(X, D);
+end
+if params.session_center
+    X = apply_session_center(X, D);
+end
+if params.variable_zscore
+    sigma = std(X, 0, 1, 'omitnan');
+    sigma(~isfinite(sigma) | sigma == 0) = 1;
+    X = X ./ sigma;
+    pre_svd.variable_zscore_sigma = sigma;
+end
+
 if params.center
     mu = mean(X, 1, 'omitnan');
     Xc = X - mu;
@@ -188,9 +222,9 @@ end
 [U, S, V] = svd(Xc, 'econ');
 coeff = V(:, 1:n_comp);
 score = U(:, 1:n_comp) * S(1:n_comp, 1:n_comp);
-latent = diag(S).^2 / max(size(Xc, 1) - 1, 1);
-latent = latent(1:n_comp);
-explained = 100 * latent / sum(latent);
+latent_all = diag(S).^2 / max(size(Xc, 1) - 1, 1);
+latent = latent_all(1:n_comp);
+explained = 100 * latent / sum(latent_all);
 obs = score;
 
 observable_idx = (1:n_comp).';
@@ -211,8 +245,33 @@ model.mu = mu;
 model.coeff = coeff;
 model.latent = latent;
 model.explained = explained;
-if isfield(D, 'variable_labels')
-    model.input_variable_labels = D.variable_labels;
+model.retained_explained = sum(explained, 'omitnan');
+model.pre_svd = pre_svd;
+if ~isempty(input_variable_labels)
+    model.input_variable_labels = input_variable_labels;
+end
+end
+
+function X = apply_session_center(X, D)
+if ~isfield(D, 'session_start_idx') || ~isfield(D, 'session_end_idx')
+    error('params.session_center requires session_start_idx/session_end_idx metadata.');
+end
+
+for i_sess = 1:numel(D.session_start_idx)
+    idx = D.session_start_idx(i_sess):D.session_end_idx(i_sess);
+    mu = mean(X(idx, :), 1, 'omitnan');
+    X(idx, :) = X(idx, :) - mu;
+end
+end
+
+function X = apply_session_detrend(X, D)
+if ~isfield(D, 'session_start_idx') || ~isfield(D, 'session_end_idx')
+    error('params.session_detrend requires session_start_idx/session_end_idx metadata.');
+end
+
+for i_sess = 1:numel(D.session_start_idx)
+    idx = D.session_start_idx(i_sess):D.session_end_idx(i_sess);
+    X(idx, :) = detrend(X(idx, :), 'linear');
 end
 end
 

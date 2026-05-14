@@ -122,7 +122,7 @@
   <rect x="1420" y="315" width="260" height="105" class="box soft-shadow" fill="url(#qGrad)" stroke="#d946ef"/>
   <text x="1450" y="352" class="box-title">BLP Readouts</text>
   <text x="1450" y="381" class="box-text">State organization</text>
-  <text x="1450" y="405" class="box-text">Spike-residual alignment</text>
+<text x="1450" y="405" class="box-text">SPKT-residual cross-correlation</text>
 
   <path d="M330 420 H395" class="arrow"/>
   <path d="M330 420 C360 420 365 508 395 508" class="arrow-light"/>

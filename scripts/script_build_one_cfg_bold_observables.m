@@ -38,7 +38,7 @@ close all force;
 cfg_name = char(string(cfg_name));
 
 if ~exist('bold_output_root', 'var') || isempty(bold_output_root)
-    bold_output_root = fullfile(io_project.get_project_processed_root(), 'bold_observables');
+    bold_output_root = io_project.get_project_processed_root();
 end
 if exist(bold_output_root, 'dir') ~= 7
     mkdir(bold_output_root);
@@ -46,7 +46,7 @@ end
 
 if ~exist('observable_modes', 'var') || isempty(observable_modes)
     observable_modes = {'eleHP', 'HP', 'roi_mean', 'slow_band_power', ...
-        'svd', 'HP_svd100', 'global_svd100'};
+        'svd', 'HP_svd100', 'global_svd100', 'gsvd100_ds'};
 end
 observable_modes = cellstr(string(observable_modes(:)).');
 
@@ -76,13 +76,8 @@ if ~exist('pre', 'var') || isempty(pre)
 end
 
 cfg_fun = ['cfg_' cfg_name];
-if exist(cfg_fun, 'file') ~= 2
-    error('Config function not found on path: %s', cfg_fun);
-end
-
-cfg = feval(cfg_fun);
-cfg = local_apply_bold_defaults(cfg);
-role_map = local_require_bold_role_map(cfg);
+cfg = local_load_bold_cfg(cfg_fun);
+role_map = cfg.bold.role_map;
 
 fprintf('Building BOLD observables for %s\n', cfg.dataset_id);
 fprintf('BOLD roits folder:\n  %s\n', fullfile(cfg.raw_data_root, cfg.bold.data_subfolder));
@@ -90,7 +85,7 @@ fprintf('Configured BOLD ROI role map:\n');
 fprintf('  eleHP -> %s\n', role_map.elehp);
 fprintf('  HP    -> %s\n', role_map.hp);
 
-dataset_out_dir = fullfile(bold_output_root, cfg.dataset_id);
+dataset_out_dir = io_project.get_pipeline_stage_dir(bold_output_root, cfg, 3, 'bold_observables');
 if exist(dataset_out_dir, 'dir') ~= 7
     mkdir(dataset_out_dir);
 end
@@ -107,20 +102,17 @@ for i_mode = 1:numel(observable_modes)
         continue;
     end
 
-    cfg_mode = cfg;
-    cfg_mode.bold.variable_mode = 'voxels';
-    cfg_mode.bold.selected_region_names = local_select_region_names_for_observable_mode(role_map, mode_name);
-
+    mode_plan = local_build_mode_plan( ...
+        cfg, mode_name, save_precision, n_svd_components, n_svd100_components);
     fprintf('Observable mode %s uses variable_mode=%s, selected_region_names=%s\n', ...
-        mode_name, cfg_mode.bold.variable_mode, strjoin(cfg_mode.bold.selected_region_names, ', '));
+        mode_name, mode_plan.cfg_mode.bold.variable_mode, mode_plan.selected_region_names_text);
 
-    D = io_raw.load_bold_dataset(cfg_mode);
+    D = io_raw.load_bold_dataset(mode_plan.cfg_mode);
     P = preprocess_bold_sessions(D, pre);
-    params = local_build_observable_params(mode_name, save_precision, n_svd_components, n_svd100_components);
-    O = build_bold_observables(P, params);
+    O = build_bold_observables(P, mode_plan.params);
     snap = make_session_aware_snapshot_pairs(O, snapshot_lag);
     artifact = save_bold_observable_artifact( ...
-        out_file, O, snap, params, pre, cfg_mode, snapshot_lag);
+        out_file, O, snap, mode_plan.params, pre, mode_plan.cfg_mode, snapshot_lag);
 
     bold_outputs(i_mode).mode_name = mode_name; %#ok<SAGROW>
     bold_outputs(i_mode).out_file = artifact.out_file; %#ok<SAGROW>
@@ -137,7 +129,12 @@ end
 fprintf('\nFinished BOLD observable build for %s.\n', cfg.dataset_id);
 
 
-function cfg = local_apply_bold_defaults(cfg)
+function cfg = local_load_bold_cfg(cfg_fun)
+if exist(cfg_fun, 'file') ~= 2
+    error('Config function not found on path: %s', cfg_fun);
+end
+
+cfg = feval(cfg_fun);
 if ~isfield(cfg, 'bold') || ~isstruct(cfg.bold)
     cfg.bold = struct();
 end
@@ -147,10 +144,6 @@ end
 if ~isfield(cfg.bold, 'input_var') || isempty(cfg.bold.input_var)
     cfg.bold.input_var = 'roiTs';
 end
-end
-
-
-function role_map = local_require_bold_role_map(cfg)
 if ~isfield(cfg, 'bold') || ~isstruct(cfg.bold) || ...
         ~isfield(cfg.bold, 'role_map') || ~isstruct(cfg.bold.role_map)
     error(['cfg.bold.role_map is required for BOLD observable building.\n' ...
@@ -160,36 +153,51 @@ if ~isfield(cfg, 'bold') || ~isstruct(cfg.bold) || ...
 end
 
 required_fields = {'elehp', 'hp'};
-role_map = struct();
 for i = 1:numel(required_fields)
     field_name = required_fields{i};
     if ~isfield(cfg.bold.role_map, field_name) || isempty(cfg.bold.role_map.(field_name))
         error('cfg.bold.role_map.%s is required for dataset %s.', ...
             field_name, cfg.dataset_id);
     end
-    role_map.(field_name) = char(string(cfg.bold.role_map.(field_name)));
+    cfg.bold.role_map.(field_name) = char(string(cfg.bold.role_map.(field_name)));
 end
 end
 
 
-function selected_region_names = local_select_region_names_for_observable_mode(role_map, mode_name)
+function mode_plan = local_build_mode_plan(cfg, mode_name, save_precision, n_svd_components, n_svd100_components)
+selected_region_names = {};
 switch lower(mode_name)
     case 'elehp'
-        selected_region_names = {role_map.elehp};
+        selected_region_names = {cfg.bold.role_map.elehp};
     case 'hp'
-        selected_region_names = {role_map.hp};
+        selected_region_names = {cfg.bold.role_map.hp};
     case 'hp_svd100'
-        selected_region_names = {role_map.hp};
+        selected_region_names = {cfg.bold.role_map.hp};
     case 'roi_mean'
-        selected_region_names = {};
     case 'slow_band_power'
-        selected_region_names = {role_map.elehp, role_map.hp};
-    case {'svd', 'global_svd100'}
-        selected_region_names = {};
+        % HP is treated as the inclusive hippocampal ROI; do not append eleHP
+        % separately here, because the loader concatenates selected ROIs
+        % without voxel de-duplication.
+        selected_region_names = {cfg.bold.role_map.hp};
+    case {'svd', 'global_svd100', 'gsvd100_ds'}
     otherwise
         error('Unsupported observable mode: %s', mode_name);
 end
 selected_region_names = cellstr(string(selected_region_names(:)).');
+
+cfg_mode = cfg;
+cfg_mode.bold.variable_mode = 'voxels';
+cfg_mode.bold.selected_region_names = selected_region_names;
+
+mode_plan = struct();
+mode_plan.cfg_mode = cfg_mode;
+mode_plan.params = local_build_observable_params( ...
+    mode_name, save_precision, n_svd_components, n_svd100_components);
+if isempty(selected_region_names)
+    mode_plan.selected_region_names_text = '(all available regions)';
+else
+    mode_plan.selected_region_names_text = strjoin(selected_region_names, ', ');
+end
 end
 
 
@@ -200,17 +208,24 @@ params.observable_branch = mode_name;
 
 if ismember(lower(mode_name), {'elehp', 'hp'})
     params.mode = 'identity';
-elseif ismember(lower(mode_name), {'hp_svd100', 'global_svd100'})
+elseif ismember(lower(mode_name), {'hp_svd100', 'global_svd100', 'gsvd100_ds'})
     params.mode = 'svd';
 else
     params.mode = mode_name;
 end
 
 params.precision = save_precision;
-if ismember(lower(mode_name), {'hp_svd100', 'global_svd100'})
+if ismember(lower(mode_name), {'hp_svd100', 'global_svd100', 'gsvd100_ds'})
     params.n_components = n_svd100_components;
 else
     params.n_components = n_svd_components;
+end
+
+if strcmpi(mode_name, 'gsvd100_ds')
+    params.dedup_by_coords = true;
+    params.session_center = true;
+    params.session_detrend = false;
+    params.variable_zscore = false;
 end
 
 if strcmpi(mode_name, 'slow_band_power')

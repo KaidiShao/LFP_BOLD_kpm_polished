@@ -1,8 +1,8 @@
 param(
     [string]$ExperimentName = "bold_wsl_20260423",
-    [string[]]$ObservableModes = @("eleHP", "HP", "roi_mean", "slow_band_power", "svd", "HP_svd100", "global_svd100"),
-    [string[]]$ResidualForms = @("projected_kv", "projected_vlambda"),
-    [ValidateSet("e10gb1", "e10gh1", "e10fV1", "f12m01")]
+    [string[]]$ObservableModes = @("eleHP", "HP", "roi_mean", "roi_mean_slow_band_power", "slow_band_power", "slow_band_power_svd", "svd", "HP_svd100", "global_svd100", "gsvd100_ds", "global_slow_band_power_svd100"),
+    [string[]]$ResidualForms = @("projected_vlambda"),
+    [ValidateSet("e10gb1", "e10gh1", "e10fV1", "f12m01", "e10gw1")]
     [string]$StartWithDataset = "e10gb1",
     [switch]$OnlyStartDataset,
     [switch]$Resume,
@@ -11,6 +11,7 @@ param(
     [switch]$ExportPsi,
     [ValidateSet("cpu", "gpu")]
     [string]$SelectedDevice = "gpu",
+    [string]$SolverName = "resdmd_batch",
     [int]$Epochs = 30,
     [int]$BatchSize = 2000,
     [int]$ChunkSize = 5000,
@@ -18,6 +19,11 @@ param(
     [double]$TrainRatio = 0.7,
     [double]$Reg = 0.1,
     [double]$LearningRate = 1e-4,
+    [int]$InnerEpochs = 5,
+    [int]$Seed = 100,
+    [switch]$TrainShuffle,
+    [ValidateSet("dual", "pre_only")]
+    [string]$SpectralSyncMode = "dual",
     [int[]]$LayerSizes = @(100, 100, 100),
     [string]$PythonExe = "python3",
     [int]$MaxParallel = 1,
@@ -44,6 +50,7 @@ $envParts = @(
     "CONTINUE_ON_ERROR='$([int][bool]$ContinueOnError)'",
     "EXPORT_PSI='$([int][bool]$ExportPsi)'",
     "SELECTED_DEVICE='$SelectedDevice'",
+    "SOLVER_NAME='$SolverName'",
     "EPOCHS='$Epochs'",
     "BATCH_SIZE='$BatchSize'",
     "CHUNK_SIZE='$ChunkSize'",
@@ -51,6 +58,10 @@ $envParts = @(
     "TRAIN_RATIO='$TrainRatio'",
     "REG='$Reg'",
     "LR='$LearningRate'",
+    "INNER_EPOCHS='$InnerEpochs'",
+    "SEED='$Seed'",
+    "TRAIN_SHUFFLE='$([int][bool]$TrainShuffle)'",
+    "SPECTRAL_SYNC_MODE='$SpectralSyncMode'",
     "LAYER_SIZES='$($LayerSizes -join ' ')'",
     "PYTHON_EXE='$PythonExe'",
     "MAX_PARALLEL='$MaxParallel'",

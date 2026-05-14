@@ -1,11 +1,11 @@
 function [result, EDMD_outputs, concat_info, source_info] = run_eigenfunction_reduction_pipeline(cfg)
-%RUN_EIGENFUNCTION_REDUCTION_PIPELINE Minimal eigenfunction-only reduction pipeline.
+%RUN_EIGENFUNCTION_REDUCTION_PIPELINE Stage orchestrator for one eigenfunction reduction run.
 
 if nargin < 1 || isempty(cfg)
     error('cfg must be provided.');
 end
 
-cfg = local_apply_defaults(cfg);
+cfg = apply_blp_eigenfunction_reduction_defaults(cfg);
 progress_enabled = local_progress_enabled(cfg);
 pipeline_tic = tic;
 
@@ -14,125 +14,52 @@ stage_tic = local_stage_start(progress_enabled, 'Loading EDMD source');
 local_stage_done(progress_enabled, 'Loaded EDMD source', stage_tic);
 
 stage_tic = local_stage_start(progress_enabled, 'Preparing eigenfunction inputs');
-prep = local_prepare_eigenfunction_inputs(EDMD_outputs, cfg);
+prep = prepare_blp_eigenfunction_reduction_inputs(EDMD_outputs, cfg);
 local_stage_done(progress_enabled, 'Prepared eigenfunction inputs', stage_tic);
 local_print_prepared_input_summary(progress_enabled, prep, EDMD_outputs);
 
-switch lower(cfg.path.kind)
-    case 'time'
-        method_name = cfg.path.time.method;
-        stage_tic = local_stage_start(progress_enabled, ...
-            sprintf('Running dimension reduction: %s/%s', cfg.path.kind, method_name));
-        reduction = reduce_eigenfunction_time_path( ...
-            prep.efun_feature_time_by_mode, cfg.path.time);
-        local_stage_done(progress_enabled, 'Finished dimension reduction', stage_tic);
+[reduction_label, method_name] = local_reduction_stage_label(cfg);
+stage_tic = local_stage_start(progress_enabled, reduction_label);
+[reduction, method_name] = run_blp_eigenfunction_reduction_method(prep, cfg);
+local_stage_done(progress_enabled, 'Finished dimension reduction', stage_tic);
 
-    case 'spectrum'
-        spectrum_cfg = cfg.path.spectrum;
-        spectrum_cfg.evalues_discrete = prep.evalues_discrete;
-        spectrum_cfg.evalues_bilinear = prep.evalues_bilinear;
-        spectrum_cfg.feature_variant = cfg.feature.variant;
-        method_name = cfg.path.spectrum.method;
-        stage_tic = local_stage_start(progress_enabled, ...
-            sprintf('Running dimension reduction: %s/%s', cfg.path.kind, method_name));
-        reduction = reduce_eigenfunction_spectrum_path( ...
-            prep.efun_feature_time_by_mode, spectrum_cfg);
-        local_stage_done(progress_enabled, 'Finished dimension reduction', stage_tic);
+stage_tic = local_stage_start(progress_enabled, 'Packing reduction result');
+result = build_blp_eigenfunction_reduction_result( ...
+    prep, reduction, method_name, cfg, source_info, concat_info);
+local_stage_done(progress_enabled, 'Packed reduction result', stage_tic);
 
-    otherwise
-        error('Unknown cfg.path.kind = %s. Use ''time'' or ''spectrum''.', cfg.path.kind);
-end
-
-result = struct();
-
-result.meta = struct();
-result.meta.created_at = char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
-result.meta.path_kind = cfg.path.kind;
-result.meta.feature_family = 'eigenfunction';
-result.meta.feature_variant = cfg.feature.variant;
-result.meta.method = method_name;
-
-result.cfg = local_strip_preloaded_source_payload(cfg);
-result.source = source_info;
-result.concat = concat_info;
-
-result.input = struct();
-result.input.dt = prep.dt;
-result.input.dt_source = prep.dt_source;
-result.input.time_axis = prep.time_axis;
-result.input.mode_index = (1:numel(prep.evalues_discrete)).';
-result.input.selected_mode_idx_in_original = prep.selected_mode_idx_in_original;
-result.input.selected_mode_mask_in_original = prep.selected_mode_mask_in_original;
-
-result.data = struct();
-result.data.evalues_discrete = prep.evalues_discrete;
-result.data.evalues_bilinear = prep.evalues_bilinear;
-result.data.efun_raw_time_by_mode = prep.efun_raw_time_by_mode;
-result.data.efun_feature_time_by_mode = prep.efun_feature_time_by_mode;
-result.data.kpm_modes_mode_by_dict = prep.kpm_modes_mode_by_dict;
-
-result.feature = struct();
-result.feature.family = 'eigenfunction';
-result.feature.variant = cfg.feature.variant;
-result.feature.normalization = cfg.feature.normalization;
-result.feature.axis_order = 'time_by_mode';
-
-result.core = reduction.core;
-result.quality = reduction.quality;
-result.aux = reduction.aux;
-
-stage_tic = local_stage_start(progress_enabled, 'Building smoothed component summary');
-result.summary = local_build_summary(result.core, cfg.summary);
-local_stage_done(progress_enabled, 'Built smoothed component summary', stage_tic);
-
-result.artifacts = struct();
-result.artifacts.result_mat_file = '';
-result.artifacts.save_payload = cfg.save.payload;
-result.artifacts.thresholded_density_mat_file = '';
-result.artifacts.thresholded_density_figure_file = '';
-result.artifacts.thresholded_events_mat_file = '';
-result.artifacts.thresholded_events_figure_file = '';
-result.artifacts.dimred_thresholded_density_mat_file = '';
-result.artifacts.dimred_thresholded_density_figure_file = '';
-result.artifacts.dimred_thresholded_events_mat_file = '';
-result.artifacts.dimred_thresholded_events_figure_file = '';
-
-result.thresholded_density = struct();
 if cfg.thresholded_density.enable
     stage_tic = local_stage_start(progress_enabled, 'Running thresholded eigenfunction density');
-    [result.thresholded_density, td_artifacts] = local_run_thresholded_density( ...
+    [result.thresholded_density, td_artifacts] = run_blp_thresholded_density_stage( ...
         prep, result, cfg.thresholded_density);
     result.artifacts.thresholded_density_mat_file = td_artifacts.mat_file;
     result.artifacts.thresholded_density_figure_file = td_artifacts.figure_file;
     local_stage_done(progress_enabled, 'Finished thresholded eigenfunction density', stage_tic);
 end
 
-result.thresholded_events = struct();
 if cfg.thresholded_events.enable
     stage_tic = local_stage_start(progress_enabled, 'Running thresholded eigenfunction events');
-    [result.thresholded_events, te_artifacts] = local_run_thresholded_events( ...
+    [result.thresholded_events, te_artifacts] = run_blp_thresholded_events_stage( ...
         prep, result, cfg.thresholded_events);
     result.artifacts.thresholded_events_mat_file = te_artifacts.mat_file;
     result.artifacts.thresholded_events_figure_file = te_artifacts.figure_file;
     local_stage_done(progress_enabled, 'Finished thresholded eigenfunction events', stage_tic);
 end
 
-result.dimred_thresholded_density = struct();
 if cfg.dimred_thresholded_density.enable
     stage_tic = local_stage_start(progress_enabled, 'Running thresholded component density');
     [result.dimred_thresholded_density, dtd_artifacts] = ...
-        local_run_dimred_thresholded_density( ...
+        run_blp_dimred_thresholded_density_stage( ...
         prep, result, cfg.dimred_thresholded_density);
     result.artifacts.dimred_thresholded_density_mat_file = dtd_artifacts.mat_file;
     result.artifacts.dimred_thresholded_density_figure_file = dtd_artifacts.figure_file;
     local_stage_done(progress_enabled, 'Finished thresholded component density', stage_tic);
 end
 
-result.dimred_thresholded_events = struct();
 if cfg.dimred_thresholded_events.enable
     stage_tic = local_stage_start(progress_enabled, 'Running thresholded component events');
     [result.dimred_thresholded_events, dte_artifacts] = ...
-        local_run_dimred_thresholded_events( ...
+        run_blp_dimred_thresholded_events_stage( ...
         prep, result, cfg.dimred_thresholded_events);
     result.artifacts.dimred_thresholded_events_mat_file = dte_artifacts.mat_file;
     result.artifacts.dimred_thresholded_events_figure_file = dte_artifacts.figure_file;
@@ -141,20 +68,7 @@ end
 
 if cfg.save.enable
     stage_tic = local_stage_start(progress_enabled, 'Saving compact reduction result');
-    if exist(cfg.save.dir, 'dir') ~= 7
-        mkdir(cfg.save.dir);
-    end
-
-    save_path = local_build_save_path(cfg, result);
-    result.artifacts.result_mat_file = save_path;
-    result_to_save = local_build_save_result(result, cfg.save.payload);
-    save_vars = struct('result', result_to_save);
-
-    if cfg.save.v7_3
-        save(save_path, '-struct', 'save_vars', 'result', '-v7.3');
-    else
-        save(save_path, '-struct', 'save_vars', 'result');
-    end
+    result = save_blp_eigenfunction_reduction_result(result, cfg);
     local_stage_done(progress_enabled, 'Saved reduction result', stage_tic);
 end
 
@@ -239,6 +153,20 @@ end
 end
 
 
+function [label, method_name] = local_reduction_stage_label(cfg)
+switch lower(cfg.path.kind)
+    case 'time'
+        method_name = cfg.path.time.method;
+    case 'spectrum'
+        method_name = cfg.path.spectrum.method;
+    otherwise
+        error('Unknown cfg.path.kind = %s. Use ''time'' or ''spectrum''.', cfg.path.kind);
+end
+
+label = sprintf('Running dimension reduction: %s/%s', cfg.path.kind, method_name);
+end
+
+
 function txt = local_format_seconds(seconds_in)
 if ~isfinite(seconds_in)
     txt = '--';
@@ -261,6 +189,9 @@ else
     end
 end
 end
+
+% Legacy in-file defaults helpers remain parked below.
+% The canonical pipeline 5 path now uses apply_blp_eigenfunction_reduction_defaults.
 
 
 function cfg = local_apply_defaults(cfg)
@@ -343,669 +274,12 @@ cfg = local_apply_dimred_thresholded_events_defaults(cfg);
 end
 
 
-function prep = local_prepare_eigenfunction_inputs(EDMD_outputs, cfg)
-required_fields = {'evalues', 'efuns'};
-for i = 1:numel(required_fields)
-    if ~isfield(EDMD_outputs, required_fields{i})
-        error('EDMD_outputs.%s is required.', required_fields{i});
-    end
-end
-
-evalues0 = EDMD_outputs.evalues(:);
-efuns0 = EDMD_outputs.efuns;
-
-if size(efuns0, 2) ~= numel(evalues0)
-    error('size(EDMD_outputs.efuns, 2) must equal numel(EDMD_outputs.evalues).');
-end
-
-ord = local_sort_eigenvalues(evalues0, cfg.selection.sort_by, cfg.selection.sort_dir);
-evalues_sorted = evalues0(ord);
-mask_sorted = abs(evalues_sorted) > cfg.selection.abs_thresh;
-idx_sorted_selected = ord(mask_sorted);
-
-if isempty(idx_sorted_selected)
-    error('No modes remain after applying abs threshold %g.', cfg.selection.abs_thresh);
-end
-
-if isfinite(cfg.selection.max_modes)
-    max_modes = min(numel(idx_sorted_selected), cfg.selection.max_modes);
-    idx_sorted_selected = idx_sorted_selected(1:max_modes);
-end
-
-selected_mode_mask = false(size(evalues0));
-selected_mode_mask(idx_sorted_selected) = true;
-
-efun_raw = efuns0(:, idx_sorted_selected);
-evalues_selected = evalues0(idx_sorted_selected);
-
-switch lower(cfg.feature.normalization)
-    case 'maxabs_per_mode'
-        efun_feature = normalize_efun(efun_raw, cfg.feature.variant);
-    otherwise
-        error('Unsupported cfg.feature.normalization = %s.', cfg.feature.normalization);
-end
-
-[dt, dt_source] = local_resolve_dt(cfg.input, EDMD_outputs);
-if isempty(dt)
-    time_axis = (1:size(efun_raw, 1)).';
-    evalues_bilinear = [];
-else
-    time_axis = (0:size(efun_raw, 1)-1).' * dt;
-    evalues_bilinear = (2 / dt) * (evalues_selected - 1) ./ (evalues_selected + 1);
-end
-
-if isfield(EDMD_outputs, 'kpm_modes') && size(EDMD_outputs.kpm_modes, 1) == numel(evalues0)
-    kpm_modes = EDMD_outputs.kpm_modes(idx_sorted_selected, :);
-else
-    kpm_modes = [];
-end
-
-prep = struct();
-prep.dt = dt;
-prep.dt_source = dt_source;
-prep.time_axis = time_axis;
-prep.selected_mode_idx_in_original = idx_sorted_selected(:);
-prep.selected_mode_mask_in_original = selected_mode_mask;
-prep.evalues_discrete = evalues_selected(:);
-prep.evalues_bilinear = evalues_bilinear;
-prep.efun_raw_time_by_mode = efun_raw;
-prep.efun_feature_time_by_mode = efun_feature;
-prep.kpm_modes_mode_by_dict = kpm_modes;
-end
-
-
-function ord = local_sort_eigenvalues(evalues, sort_by, sort_dir)
-switch lower(sort_by)
-    case {'modulus', 'abs'}
-        key = abs(evalues);
-    case {'real', 'realpart'}
-        key = real(evalues);
-    otherwise
-        error('Unknown cfg.selection.sort_by = %s.', sort_by);
-end
-
-[~, ord] = sort(key, sort_dir);
-end
-
-
-function [dt, dt_source] = local_resolve_dt(input_cfg, EDMD_outputs)
-dt = [];
-dt_source = struct();
-dt_source.source = 'missing';
-dt_source.field = '';
-dt_source.observable_file = '';
-dt_source.message = '';
-
-if isfield(input_cfg, 'dt') && ~isempty(input_cfg.dt)
-    dt = local_positive_scalar(input_cfg.dt);
-    if isempty(dt)
-        error('cfg.input.dt must be empty or a positive finite scalar.');
-    end
-    dt_source.source = 'cfg.input.dt';
-    dt_source.field = 'dt';
-    return;
-end
-
-candidate_fields = {'dt', 'dx', 'sampling_period', 'sample_period'};
-[dt, field_name] = local_read_first_positive_scalar(EDMD_outputs, candidate_fields);
-if ~isempty(dt)
-    dt_source.source = 'EDMD_outputs';
-    dt_source.field = field_name;
-    return;
-end
-
-observable_file = local_resolve_observable_file(input_cfg, EDMD_outputs);
-dt_source.observable_file = observable_file;
-
-if isempty(observable_file)
-    dt_source.message = ['No dt/dx was found in EDMD_outputs, and no ', ...
-        'cfg.input.observable_file or EDMD observable_file/data_full_path was available.'];
-    return;
-end
-
-if exist(observable_file, 'file') ~= 2
-    dt_source.message = sprintf(['No dt/dx was found in EDMD_outputs. ', ...
-        'The configured observable file does not exist: %s'], observable_file);
-    return;
-end
-
-[dt, observable_field, detail_msg] = local_read_dt_from_observable_file(observable_file);
-if ~isempty(dt)
-    dt_source.source = 'observable_file';
-    dt_source.field = observable_field;
-    dt_source.message = sprintf('Read sampling interval from %s.', observable_file);
-else
-    dt_source.message = sprintf(['No dt/dx was found in EDMD_outputs, and ', ...
-        'observable file %s did not contain usable dx/dt/session_dx/fs metadata. %s'], ...
-        observable_file, detail_msg);
-end
-end
-
-
-function observable_file = local_resolve_observable_file(input_cfg, EDMD_outputs)
-observable_file = '';
-
-input_fields = {'observable_file', 'data_file', 'data_full_path'};
-for i = 1:numel(input_fields)
-    field_name = input_fields{i};
-    if isfield(input_cfg, field_name)
-        observable_file = local_text_scalar(input_cfg.(field_name));
-        if ~isempty(observable_file)
-            return;
-        end
-    end
-end
-
-edmd_fields = {'observable_file', 'data_full_path'};
-for i = 1:numel(edmd_fields)
-    field_name = edmd_fields{i};
-    if isfield(EDMD_outputs, field_name)
-        observable_file = local_text_scalar(EDMD_outputs.(field_name));
-        if ~isempty(observable_file)
-            return;
-        end
-    end
-end
-end
-
-
-function [dt, field_name] = local_read_first_positive_scalar(S, field_names)
-dt = [];
-field_name = '';
-
-for i = 1:numel(field_names)
-    this_field = field_names{i};
-    if ~isfield(S, this_field)
-        continue;
-    end
-
-    dt = local_positive_scalar(S.(this_field));
-    if ~isempty(dt)
-        field_name = this_field;
-        return;
-    end
-end
-end
-
-
-function [dt, field_name, detail_msg] = local_read_dt_from_observable_file(observable_file)
-dt = [];
-field_name = '';
-detail_msg = '';
-
-try
-    vars = who('-file', observable_file);
-catch ME
-    detail_msg = sprintf('Could not inspect observable file: %s', ME.message);
-    return;
-end
-
-fields_to_load = intersect( ...
-    {'dx', 'dt', 'sampling_period', 'sample_period', ...
-    'fs', 'sampling_frequency', 'session_dx', 'session_fs'}, ...
-    vars, 'stable');
-
-if isempty(fields_to_load)
-    detail_msg = 'No candidate time-metadata variables were present.';
-    return;
-end
-
-try
-    S = load(observable_file, fields_to_load{:});
-catch ME
-    detail_msg = sprintf('Could not load observable time metadata: %s', ME.message);
-    return;
-end
-
-[dt, field_name] = local_read_first_positive_scalar( ...
-    S, {'dx', 'dt', 'sampling_period', 'sample_period'});
-if ~isempty(dt)
-    return;
-end
-
-if isfield(S, 'session_dx')
-    dt = local_uniform_positive_scalar(S.session_dx);
-    if ~isempty(dt)
-        field_name = 'session_dx';
-        return;
-    end
-    detail_msg = 'session_dx exists but is empty, non-positive, or inconsistent across sessions.';
-end
-
-[fs, fs_field] = local_read_first_positive_scalar(S, {'fs', 'sampling_frequency'});
-if isempty(fs) && isfield(S, 'session_fs')
-    fs = local_uniform_positive_scalar(S.session_fs);
-    if ~isempty(fs)
-        fs_field = 'session_fs';
-    end
-end
-
-if ~isempty(fs)
-    dt = 1 / fs;
-    field_name = fs_field;
-    return;
-end
-
-if isempty(detail_msg)
-    detail_msg = 'Candidate variables were present but did not resolve to a positive scalar dt.';
-end
-end
-
-
-function value = local_positive_scalar(value_in)
-value = [];
-if ~isnumeric(value_in) || isempty(value_in)
-    return;
-end
-
-if ~isreal(value_in)
-    value_in = real(value_in);
-end
-
-value_in = double(value_in);
-if ~isscalar(value_in) || ~isfinite(value_in) || value_in <= 0
-    return;
-end
-
-value = value_in;
-end
-
-
-function value = local_uniform_positive_scalar(value_in)
-value = [];
-if ~isnumeric(value_in) || isempty(value_in)
-    return;
-end
-
-if ~isreal(value_in)
-    value_in = real(value_in);
-end
-
-values = double(value_in(:));
-values = values(isfinite(values) & values > 0);
-if isempty(values)
-    return;
-end
-
-value0 = median(values);
-tol = max(1e-12, 1e-5 * abs(value0));
-if all(abs(values - value0) <= tol)
-    value = value0;
-end
-end
-
-
-function txt = local_text_scalar(value)
-txt = '';
-if isstring(value)
-    value = char(value);
-end
-
-if iscell(value) && isscalar(value)
-    txt = local_text_scalar(value{1});
-    return;
-end
-
-if ischar(value)
-    txt = strtrim(value(:).');
-end
-end
-
-
-function summary = local_build_summary(core, summary_cfg)
-summary = struct();
-summary.temporal_components_smooth_time_by_comp = [];
-
-if ~summary_cfg.smooth.enable || isempty(core.temporal_components_time_by_comp)
-    return;
-end
-
-switch lower(summary_cfg.smooth.method)
-    case 'movmean'
-        summary.temporal_components_smooth_time_by_comp = movmean( ...
-            core.temporal_components_time_by_comp, ...
-            summary_cfg.smooth.window, 1, ...
-            'Endpoints', 'shrink');
-    otherwise
-        error('Unsupported summary smoothing method %s.', summary_cfg.smooth.method);
-end
-end
-
-
-function [td_summary, artifacts] = local_run_thresholded_density(prep, result, td_cfg)
-if isempty(prep.dt) && local_thresholded_density_needs_dt(td_cfg)
-    error(['Thresholded density requires a sampling interval because its ', ...
-        'window/step/smoothing parameters are specified in seconds. ', ...
-        '%s'], prep.dt_source.message);
-end
-
-td_cfg.time_axis = prep.time_axis;
-td_cfg.dt_source = prep.dt_source;
-td_cfg.mode_index = result.input.mode_index;
-td_cfg.selected_mode_idx_in_original = prep.selected_mode_idx_in_original;
-
-if ~isfield(td_cfg, 'title') || isempty(td_cfg.title)
-    td_cfg.title = sprintf('%s Thresholded Eigenfunction Density', ...
-        result.meta.method);
-end
-
-[D, fig] = get_thresholded_density( ...
-    prep.efun_feature_time_by_mode, prep.dt, td_cfg);
-
-if td_cfg.close_figure && ~isempty(fig) && isvalid(fig)
-    close(fig);
-end
-
-td_summary = local_compact_thresholded_density(D);
-artifacts = D.artifacts;
-end
-
-
-function tf = local_thresholded_density_needs_dt(td_cfg)
-has_window_samples = isfield(td_cfg, 'window_samples') && ~isempty(td_cfg.window_samples);
-has_step_samples = isfield(td_cfg, 'step_samples') && ~isempty(td_cfg.step_samples);
-
-tf = ~(has_window_samples && has_step_samples);
-
-smooth_enabled = isfield(td_cfg, 'smooth_density') && ~isempty(td_cfg.smooth_density) && ...
-    logical(td_cfg.smooth_density);
-has_smooth_bins = isfield(td_cfg, 'smooth_window_bins') && ~isempty(td_cfg.smooth_window_bins);
-smooth_sec_positive = isfield(td_cfg, 'smooth_window_sec') && ...
-    ~isempty(td_cfg.smooth_window_sec) && td_cfg.smooth_window_sec > 0;
-
-tf = tf || (smooth_enabled && smooth_sec_positive && ~has_smooth_bins);
-end
-
-
-function td_summary = local_compact_thresholded_density(D)
-td_summary = struct();
-td_summary.created_at = D.created_at;
-td_summary.input = D.input;
-td_summary.params = D.params;
-td_summary.summary = D.summary;
-td_summary.artifacts = D.artifacts;
-td_summary.threshold_by_mode = D.threshold_by_mode;
-td_summary.density_size = size(D.density_time_by_mode);
-td_summary.t_range = [D.t_centers(1), D.t_centers(end)];
-td_summary.n_windows = numel(D.t_centers);
-td_summary.n_modes = size(D.density_time_by_mode, 2);
-end
-
-
-function [te_summary, artifacts] = local_run_thresholded_events(prep, result, te_cfg)
-if isempty(prep.dt)
-    error('Thresholded events require a sampling interval. %s', ...
-        prep.dt_source.message);
-end
-
-te_cfg.time_axis = prep.time_axis;
-te_cfg.dt_source = prep.dt_source;
-te_cfg.mode_index = result.input.mode_index;
-te_cfg.selected_mode_idx_in_original = prep.selected_mode_idx_in_original;
-
-if ~isfield(te_cfg, 'title') || isempty(te_cfg.title)
-    te_cfg.title = sprintf('%s Thresholded Eigenfunction Events', ...
-        result.meta.method);
-end
-
-[E, figs] = get_thresholded_events( ...
-    prep.efun_feature_time_by_mode, prep.dt, prep.evalues_discrete, te_cfg);
-
-if te_cfg.close_figure && isfield(figs, 'summary') && ...
-        ~isempty(figs.summary) && isvalid(figs.summary)
-    close(figs.summary);
-end
-
-te_summary = local_compact_thresholded_events(E);
-artifacts = E.artifacts;
-end
-
-
-function te_summary = local_compact_thresholded_events(E)
-te_summary = struct();
-te_summary.created_at = E.created_at;
-te_summary.input = E.input;
-te_summary.params = E.params;
-te_summary.summary = E.summary;
-te_summary.artifacts = E.artifacts;
-te_summary.threshold_by_mode = E.threshold_by_mode;
-te_summary.mode_timescales = E.mode_timescales;
-te_summary.event_rate_size = size(E.event_rate_time_by_mode);
-te_summary.t_range = [E.t_centers(1), E.t_centers(end)];
-te_summary.n_windows = numel(E.t_centers);
-te_summary.n_modes = size(E.event_rate_time_by_mode, 2);
-te_summary.n_events = height(E.event_table);
-end
-
-
-function [td_summary, artifacts] = local_run_dimred_thresholded_density( ...
-        prep, result, td_cfg)
-if isempty(result.core.temporal_components_time_by_comp)
-    error('Dimension-reduced thresholded density requires temporal components.');
-end
-
-if isempty(prep.dt) && local_thresholded_density_needs_dt(td_cfg)
-    error(['Dimension-reduced thresholded density requires a sampling ', ...
-        'interval because its window/step/smoothing parameters are ', ...
-        'specified in seconds. %s'], prep.dt_source.message);
-end
-
-td_cfg.time_axis = prep.time_axis;
-td_cfg.dt_source = prep.dt_source;
-td_cfg.component_index = (1:size(result.core.temporal_components_time_by_comp, 2)).';
-
-if ~isfield(td_cfg, 'title') || isempty(td_cfg.title)
-    td_cfg.title = sprintf('%s Thresholded Component Density', ...
-        result.meta.method);
-end
-
-[D, ~] = get_dimred_thresholded_density(result, prep.dt, td_cfg);
-
-td_summary = local_compact_dimred_thresholded_density(D);
-artifacts = D.artifacts;
-end
-
-
-function td_summary = local_compact_dimred_thresholded_density(D)
-td_summary = struct();
-td_summary.created_at = D.created_at;
-td_summary.meta = D.meta;
-td_summary.input = D.input;
-td_summary.params = D.params;
-td_summary.summary = D.summary;
-td_summary.artifacts = D.artifacts;
-td_summary.threshold_by_component = D.threshold_by_component;
-td_summary.component_index = D.component_index;
-td_summary.density_size = size(D.density_time_by_component);
-td_summary.t_range = [D.t_centers(1), D.t_centers(end)];
-td_summary.n_windows = numel(D.t_centers);
-td_summary.n_components = size(D.density_time_by_component, 2);
-end
-
-
-function [te_summary, artifacts] = local_run_dimred_thresholded_events( ...
-        prep, result, te_cfg)
-if isempty(result.core.temporal_components_time_by_comp)
-    error('Dimension-reduced thresholded events require temporal components.');
-end
-
-if isempty(prep.dt)
-    error(['Dimension-reduced thresholded events require a sampling ', ...
-        'interval. %s'], prep.dt_source.message);
-end
-
-te_cfg.time_axis = prep.time_axis;
-te_cfg.dt_source = prep.dt_source;
-te_cfg.component_index = (1:size(result.core.temporal_components_time_by_comp, 2)).';
-
-if ~isfield(te_cfg, 'title') || isempty(te_cfg.title)
-    te_cfg.title = sprintf('%s Thresholded Component Events', ...
-        result.meta.method);
-end
-
-[E, ~] = get_dimred_thresholded_events(result, prep.dt, te_cfg);
-
-te_summary = local_compact_dimred_thresholded_events(E);
-artifacts = E.artifacts;
-end
-
-
-function te_summary = local_compact_dimred_thresholded_events(E)
-te_summary = struct();
-te_summary.created_at = E.created_at;
-te_summary.meta = E.meta;
-te_summary.input = E.input;
-te_summary.params = E.params;
-te_summary.summary = E.summary;
-te_summary.artifacts = E.artifacts;
-te_summary.threshold_by_component = E.threshold_by_component;
-te_summary.component_index = E.component_index;
-te_summary.component_evalues_discrete = E.component_evalues_discrete;
-te_summary.component_evalue_info = E.component_evalue_info;
-te_summary.component_timescales = E.component_timescales;
-te_summary.event_rate_size = size(E.event_rate_time_by_component);
-te_summary.t_range = [E.t_centers(1), E.t_centers(end)];
-te_summary.n_windows = numel(E.t_centers);
-te_summary.n_components = size(E.event_rate_time_by_component, 2);
-te_summary.n_events = height(E.event_table);
-end
-
-
-function result_to_save = local_build_save_result(result, payload)
-if isstring(payload)
-    payload = char(payload);
-end
-payload = lower(strtrim(payload));
-
-switch payload
-    case {'full', 'all'}
-        result_to_save = result;
-
-    case {'compact', 'minimal'}
-        result_to_save = result;
-        result_to_save.meta.save_payload = 'compact';
-
-        if isfield(result_to_save, 'data') && isstruct(result_to_save.data)
-            result_to_save.data = local_compact_data(result_to_save.data);
-        end
-
-        if isfield(result_to_save, 'core') && isstruct(result_to_save.core)
-            result_to_save.core = local_compact_core(result_to_save.core);
-        end
-
-        if isfield(result_to_save, 'aux') && isstruct(result_to_save.aux)
-            result_to_save.aux = local_compact_aux(result_to_save.aux);
-        end
-
-        if isfield(result_to_save, 'concat') && isstruct(result_to_save.concat)
-            result_to_save.concat = local_compact_concat(result_to_save.concat);
-        end
-
-        if isfield(result_to_save, 'cfg') && isstruct(result_to_save.cfg)
-            result_to_save.cfg = local_compact_cfg(result_to_save.cfg);
-        end
-
-    otherwise
-        error('Unknown cfg.save.payload = %s. Use ''compact'' or ''full''.', payload);
-end
-end
-
-
-function data = local_compact_data(data)
-remove_fields = {'efun_raw_time_by_mode', 'efun_feature_time_by_mode', ...
-    'kpm_modes_mode_by_dict'};
-omitted = local_existing_fields(data, remove_fields);
-data = local_rmfield_if_present(data, remove_fields);
-if ~isempty(omitted)
-    data.omitted_compact_fields = omitted;
-end
-end
-
-
-function core = local_compact_core(core)
-remove_fields = {'reconstruction_time_by_mode'};
-omitted = local_existing_fields(core, remove_fields);
-core = local_rmfield_if_present(core, remove_fields);
-if ~isempty(omitted)
-    core.omitted_compact_fields = omitted;
-end
-end
-
-
-function aux = local_compact_aux(aux)
-if isfield(aux, 'spectrum') && isstruct(aux.spectrum)
-    remove_fields = {'distance_mode_by_mode'};
-    omitted = local_existing_fields(aux.spectrum, remove_fields);
-    aux.spectrum = local_rmfield_if_present(aux.spectrum, remove_fields);
-
-    if isfield(aux.spectrum, 'embedding_info') && ...
-            isstruct(aux.spectrum.embedding_info)
-        aux.spectrum.embedding_info = local_rmfield_if_present( ...
-            aux.spectrum.embedding_info, {'gm'});
-    end
-
-    if ~isempty(omitted)
-        aux.spectrum.omitted_compact_fields = omitted;
-    end
-end
-end
-
-
-function concat = local_compact_concat(concat)
-if isfield(concat, 'chunk_ids') && ~isempty(concat.chunk_ids)
-    concat.chunk_id_range = [concat.chunk_ids(1), concat.chunk_ids(end)];
-end
-
-remove_fields = {'files', 'chunk_ids', 'chunk_lengths', ...
-    'chunk_start_idx', 'chunk_end_idx'};
-omitted = local_existing_fields(concat, remove_fields);
-concat = local_rmfield_if_present(concat, remove_fields);
-if ~isempty(omitted)
-    concat.omitted_compact_fields = omitted;
-end
-end
-
-
-function cfg = local_compact_cfg(cfg)
-cfg = local_strip_preloaded_source_payload(cfg);
-
-if isfield(cfg, 'viz') && isstruct(cfg.viz)
-    if isfield(cfg.viz, 'spectrum') && isstruct(cfg.viz.spectrum)
-        cfg.viz.spectrum = local_rmfield_if_present(cfg.viz.spectrum, ...
-            {'distance_colormap', 'embedding_index_colormap', ...
-            'cluster_colormap'});
-    end
-
-    if isfield(cfg.viz, 'state_space') && isstruct(cfg.viz.state_space)
-        cfg.viz.state_space = local_rmfield_if_present(cfg.viz.state_space, ...
-            {'time_colormap', 'value_colormap'});
-    end
-end
-end
-
-
-function cfg = local_strip_preloaded_source_payload(cfg)
-if isfield(cfg, 'source') && isstruct(cfg.source)
-    cfg.source = local_rmfield_if_present(cfg.source, ...
-        {'preloaded_EDMD_outputs', 'preloaded_concat_info', ...
-        'preloaded_source_info'});
-end
-end
-
-
 function save_dir = local_default_save_dir(cfg)
 source_run_name = local_source_run_name(cfg);
-
-if isfield(cfg, 'dataset') && isfield(cfg.dataset, 'name') && ...
-        ~isempty(cfg.dataset.name)
-    save_dir = fullfile(io_project.get_project_processed_root(), cfg.dataset.name, ...
-        'efun', ...
-        source_run_name, 'mat');
-else
-    save_dir = fullfile(io_project.get_project_processed_root(), ...
-        'efun', ...
-        source_run_name, 'mat');
-end
+dataset_name = local_dataset_name(cfg);
+stage_root = io_project.get_pipeline_stage_dir( ...
+    io_project.get_project_processed_root(), dataset_name, 5, 'eigenfunction_reduction');
+save_dir = fullfile(stage_root, source_run_name, 'mat');
 end
 
 
@@ -1037,25 +311,6 @@ elseif isfield(cfg, 'source') && isfield(cfg.source, 'edmd_file') && ...
 end
 
 source_run_name = regexprep(char(source_run_name), '[^\w\-]+', '_');
-end
-
-
-function fields = local_existing_fields(S, names)
-fields = {};
-for i = 1:numel(names)
-    if isfield(S, names{i})
-        fields{end+1, 1} = names{i}; %#ok<AGROW>
-    end
-end
-end
-
-
-function S = local_rmfield_if_present(S, names)
-for i = 1:numel(names)
-    if isfield(S, names{i})
-        S = rmfield(S, names{i});
-    end
-end
 end
 
 
@@ -1593,18 +848,4 @@ if isfield(cfg, 'dataset') && isfield(cfg.dataset, 'name') && ...
     dataset_name = char(cfg.dataset.name);
 end
 dataset_name = regexprep(dataset_name, '[^\w\-]+', '_');
-end
-
-
-function save_path = local_build_save_path(cfg, result)
-timestamp = char(datetime('now', 'Format', 'yyyyMMdd_HHmmss'));
-pieces = {cfg.save.file_stem, cfg.path.kind, lower(cfg.feature.variant), lower(result.meta.method)};
-
-if isfield(cfg.save, 'tag') && ~isempty(cfg.save.tag)
-    pieces{end+1} = cfg.save.tag;
-end
-
-filename = strjoin(pieces, '__');
-filename = regexprep(filename, '[^\w\-]+', '_');
-save_path = fullfile(cfg.save.dir, sprintf('%s__%s.mat', filename, timestamp));
 end

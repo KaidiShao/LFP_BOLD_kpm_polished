@@ -62,7 +62,9 @@ if ~exist('window_result_file', 'var') || isempty(window_result_file)
         cfg.file_stem, ...
         pipeline_params.window_params.window_length_samples, ...
         pipeline_params.window_params.window_mode);
-    window_result_file = fullfile(output_root, cfg.file_stem, 'consensus_state_diversity_windows', [save_tag, '.mat']);
+    window_result_file = fullfile( ...
+        io_project.get_pipeline_stage_dir(output_root, cfg, 2, 'consensus_state_diversity_windows'), ...
+        [save_tag, '.mat']);
 end
 
 if exist(window_result_file, 'file') ~= 2
@@ -73,7 +75,8 @@ S = load(window_result_file, 'W');
 W = S.W;
 
 params = pipeline_params.plot_params;
-params.save_dir = fullfile(output_root, cfg.file_stem, 'consensus_state_diversity_windows', 'top_window_plots');
+params.save_dir = io_project.get_pipeline_stage_dir( ...
+    output_root, cfg, 2, 'figures_consensus_state_top_window_plots');
 params.skip_existing = true;
 if exist('skip_existing', 'var') && ~isempty(skip_existing)
     params.skip_existing = logical(skip_existing);

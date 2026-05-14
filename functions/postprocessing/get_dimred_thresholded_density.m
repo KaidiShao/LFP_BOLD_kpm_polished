@@ -71,6 +71,7 @@ if params.save_figure
     if exist(params.figure_dir, 'dir') ~= 7
         mkdir(params.figure_dir);
     end
+    drawnow;
     exportgraphics(fig, D.artifacts.figure_file, ...
         'Resolution', params.figure_resolution);
 end
@@ -80,25 +81,31 @@ if params.save_results
         mkdir(params.save_dir);
     end
 
-    density = D.density_time_by_component; %#ok<NASGU>
-    density_time_by_component = D.density_time_by_component; %#ok<NASGU>
-    thresholds = D.threshold_by_component; %#ok<NASGU>
-    threshold_by_component = D.threshold_by_component; %#ok<NASGU>
-    t_centers = D.t_centers; %#ok<NASGU>
-    component_index = D.component_index; %#ok<NASGU>
-    source_meta = D.meta; %#ok<NASGU>
-    params_saved = D.params; %#ok<NASGU>
+    density = D.density_time_by_component;
+    density_time_by_component = D.density_time_by_component;
+    thresholds = D.threshold_by_component;
+    threshold_by_component = D.threshold_by_component;
+    t_centers = D.t_centers;
+    component_index = D.component_index;
+    source_meta = D.meta;
+    params = D.params;
+    params_saved = D.params;
+    summary = D.summary;
+    artifacts = D.artifacts;
+    input = D.input;
 
     if params.save_v7_3
-        save(D.artifacts.mat_file, 'D', 'density', ...
+        save(D.artifacts.mat_file, 'density', ...
             'density_time_by_component', 'thresholds', ...
             'threshold_by_component', 't_centers', ...
-            'component_index', 'source_meta', 'params_saved', '-v7.3');
+            'component_index', 'source_meta', 'params', ...
+            'params_saved', 'summary', 'artifacts', 'input', '-v7.3');
     else
-        save(D.artifacts.mat_file, 'D', 'density', ...
+        save(D.artifacts.mat_file, 'density', ...
             'density_time_by_component', 'thresholds', ...
             'threshold_by_component', 't_centers', ...
-            'component_index', 'source_meta', 'params_saved');
+            'component_index', 'source_meta', 'params', ...
+            'params_saved', 'summary', 'artifacts', 'input');
     end
 end
 

@@ -17,6 +17,22 @@ def resolve_local_results_root():
     return Path("/mnt/e/autodl_results")
 
 
+def resolve_ssh_binary():
+    if os.name == "nt":
+        candidate = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "OpenSSH" / "ssh.exe"
+        if candidate.exists():
+            return str(candidate)
+    return "ssh"
+
+
+def resolve_scp_binary():
+    if os.name == "nt":
+        candidate = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "OpenSSH" / "scp.exe"
+        if candidate.exists():
+            return str(candidate)
+    return "scp"
+
+
 def sanitize_tag(value):
     return str(value).replace("/", "-").replace(" ", "_")
 
@@ -79,11 +95,28 @@ def parse_args():
     parser.add_argument("--dataset-stem", default=None)
     parser.add_argument("--selected-device", default="gpu", choices=["cpu", "gpu"])
     parser.add_argument("--solver-name", default="resdmd_batch")
+    parser.add_argument("--seed", type=int, default=100)
+    parser.add_argument("--train-shuffle", dest="train_shuffle", action="store_true")
+    parser.add_argument("--no-train-shuffle", dest="train_shuffle", action="store_false")
+    parser.set_defaults(train_shuffle=False)
+    parser.add_argument(
+        "--spectral-sync-mode",
+        default="dual",
+        choices=["dual", "pre_only"],
+    )
     parser.add_argument(
         "--residual-form",
-        default="projected_kv",
+        default="projected_vlambda",
         choices=["projected_kv", "projected_vlambda"],
     )
+    parser.add_argument(
+        "--training-policy",
+        default="float64",
+        choices=["float32", "float64", "mixed_float16"],
+    )
+    parser.add_argument("--analysis-dtype", default="float64")
+    parser.add_argument("--gram-dtype", default="float64")
+    parser.add_argument("--spectral-dtype", default="float64")
     parser.add_argument(
         "--loss-mode",
         default="squared",
@@ -100,11 +133,16 @@ def parse_args():
         "--observable-mode",
         default="abs",
         choices=[
-            "abs", "complex", "complex_split", "eleHP", "HP", "identity",
-            "roi_mean", "slow_band_power", "svd", "HP_svd100", "global_svd100",
+            "abs",
+            "complex_split",
+            "eleHP", "HP",
+            "roi_mean", "roi_mean_slow_band_power",
+            "slow_band_power", "slow_band_power_svd",
+            "svd", "HP_svd100", "global_svd100", "gsvd100_ds",
+            "global_slow_band_power_svd100",
         ],
     )
-    parser.add_argument("--file-type", default=".h5", choices=[".h5", ".mat"])
+    parser.add_argument("--file-type", default=".mat", choices=[".h5", ".mat"])
     parser.add_argument("--field-name", default="obs")
     parser.add_argument("--layer-sizes", type=int, nargs="+", default=[100, 100, 100])
     parser.add_argument("--n-psi-train", type=int, default=100)
@@ -172,16 +210,18 @@ def parse_args():
 def resolve_observable_tag(observable_mode):
     observable_mode_map = {
         "abs": "abs",
-        "complex": "complex_split",
         "complex_split": "complex_split",
         "eleHP": "eleHP",
         "HP": "HP",
-        "identity": "identity",
         "roi_mean": "roi_mean",
+        "roi_mean_slow_band_power": "roi_mean_slow_band_power",
         "slow_band_power": "slow_band_power",
+        "slow_band_power_svd": "slow_band_power_svd",
         "svd": "svd",
         "HP_svd100": "HP_svd100",
         "global_svd100": "global_svd100",
+        "gsvd100_ds": "gsvd100_ds",
+        "global_slow_band_power_svd100": "global_slow_band_power_svd100",
     }
     return observable_mode_map[observable_mode]
 
@@ -199,7 +239,7 @@ def ssh_target(args):
 
 
 def build_ssh_base(args):
-    cmd = ["ssh", "-p", str(args.ssh_port)]
+    cmd = [resolve_ssh_binary(), "-p", str(args.ssh_port)]
     if args.ssh_key:
         cmd.extend(["-i", args.ssh_key])
     cmd.append(ssh_target(args))
@@ -207,7 +247,7 @@ def build_ssh_base(args):
 
 
 def build_scp_base(args):
-    cmd = ["scp", "-P", str(args.ssh_port)]
+    cmd = [resolve_scp_binary(), "-P", str(args.ssh_port)]
     if args.ssh_key:
         cmd.extend(["-i", args.ssh_key])
     return cmd
@@ -334,10 +374,14 @@ def build_remote_python_command(args, remote_script_path, remote_data_filename, 
         args.solver_name,
         "--residual-form",
         args.residual_form,
-        "--loss-mode",
-        args.loss_mode,
-        "--loss-epsilon",
-        str(args.loss_epsilon),
+        "--training-policy",
+        args.training_policy,
+        "--analysis-dtype",
+        args.analysis_dtype,
+        "--gram-dtype",
+        args.gram_dtype,
+        "--spectral-dtype",
+        args.spectral_dtype,
         "--data-subdir",
         remote_data_subdir,
         "--dataset-stem",
@@ -372,9 +416,18 @@ def build_remote_python_command(args, remote_script_path, remote_data_filename, 
         str(args.inner_epochs),
         "--end-condition",
         str(args.end_condition),
+        "--seed",
+        str(args.seed),
+        "--spectral-sync-mode",
+        args.spectral_sync_mode,
         "--chunk-size",
         str(args.chunk_size),
     ]
+
+    # Keep the remote CLI compatible with older AutoDL copies of
+    # run_autodl_reskoopnet_mlp.py, which may not accept the newer
+    # --loss-mode / --loss-epsilon flags. The remote script defaults already
+    # match the current production behavior (squared loss, 1e-12 epsilon).
 
     for layer_size in args.layer_sizes:
         if "--layer-sizes" not in parts:
@@ -386,6 +439,8 @@ def build_remote_python_command(args, remote_script_path, remote_data_filename, 
         parts.append("--resume")
     if args.fresh_checkpoints:
         parts.append("--fresh-checkpoints")
+    if args.train_shuffle:
+        parts.append("--train-shuffle")
     if args.export_psi:
         parts.append("--export-psi")
 

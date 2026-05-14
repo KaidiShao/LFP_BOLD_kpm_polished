@@ -17,7 +17,14 @@ end
 set(groot, 'defaultFigureVisible', 'off');
 
 if ~exist('cfg', 'var') || ~isstruct(cfg) || ~isfield(cfg, 'source')
-    cfg = cfg_eigenfunction_reduction_minimal();
+    if ~exist('cfg_name', 'var') || isempty(cfg_name)
+        cfg_name = 'E10gb1';
+    end
+    cfg_fun = ['cfg_' char(string(cfg_name))];
+    if exist(cfg_fun, 'file') ~= 2
+        error('Config function not found on path: %s', cfg_fun);
+    end
+    cfg = feval(cfg_fun);
 end
 output_root = cfg.dataset.processed_root;
 
@@ -31,7 +38,8 @@ params.force_recompute_norm_cache = false;
 params.chunk_scan_progress_every = 100;
 params.baseline_code = cfg.viz.state_space_consensus.baseline_code;
 params.state_start_idx = cfg.viz.state_space_consensus.state_start_idx;
-params.save_dir = fullfile(cfg.output.root, 'top30');
+params.save_dir = io_project.get_pipeline_stage_dir( ...
+    cfg.dataset.processed_root, cfg.dataset.name, 5, 'efun_dimred_top30');
 params.norm_cache_file = fullfile(params.save_dir, 'norm.mat');
 
 if exist('top_window_params', 'var') && isstruct(top_window_params)
@@ -43,7 +51,8 @@ if exist('top_window_params', 'var') && isstruct(top_window_params)
         params.state_start_idx = cfg.viz.state_space_consensus.state_start_idx;
     end
     if ~isfield(top_window_params, 'save_dir') || isempty(top_window_params.save_dir)
-        params.save_dir = fullfile(cfg.output.root, 'top30');
+        params.save_dir = io_project.get_pipeline_stage_dir( ...
+            cfg.dataset.processed_root, cfg.dataset.name, 5, 'efun_dimred_top30');
     end
     if ~isfield(top_window_params, 'norm_cache_file') || isempty(top_window_params.norm_cache_file)
         params.norm_cache_file = fullfile(params.save_dir, 'norm.mat');
@@ -55,10 +64,10 @@ if exist(params.save_dir, 'dir') ~= 7
 end
 
 if ~exist('result_file', 'var') || isempty(result_file)
-    result_file = local_find_latest_result_file(cfg.save.dir);
+    result_file = find_latest_blp_eigenfunction_reduction_result(output_root, cfg);
 end
 window_result_file = fullfile(output_root, cfg.dataset.name, ...
-    'consensus_state_diversity_windows', ...
+    io_project.get_pipeline_stage_name(2, 'consensus_state_diversity_windows'), ...
     sprintf('%s_consensus_state_diversity_windows_6000samp_globalwin.mat', ...
     cfg.dataset.name));
 
@@ -135,6 +144,9 @@ for i = 1:n_windows
         overview_cfg.event_windows = local_build_consensus_event_windows( ...
             C_consensus, result_window.input.time_axis, idx1, idx2, params);
         overview_cfg.event_colors = local_build_consensus_event_colors(C_consensus, cfg);
+        overview_cfg.event_labels = local_build_consensus_event_labels(C_consensus);
+        overview_cfg.show_event_legend = true;
+        overview_cfg.event_alpha = 0.30;
 
         [fig_overview, overview_info] = ...
             plot_eigenfunction_component_overview(result_window, overview_cfg);
@@ -199,23 +211,6 @@ writetable(manifest_table, manifest_file);
 
 fprintf('\nSaved %d top-window plot sets.\n', n_windows);
 fprintf('Manifest:\n  %s\n', manifest_file);
-
-
-function result_file = local_find_latest_result_file(result_dir)
-if exist(result_dir, 'dir') ~= 7
-    error(['Result directory does not exist:\n  %s\n', ...
-        'Run script_run_eigenfunction_reduction_minimal.m first.'], result_dir);
-end
-
-L = dir(fullfile(result_dir, '*.mat'));
-if isempty(L)
-    error(['No eigenfunction reduction MAT files were found in:\n  %s\n', ...
-        'Run script_run_eigenfunction_reduction_minimal.m first.'], result_dir);
-end
-
-[~, idx] = max([L.datenum]);
-result_file = fullfile(L(idx).folder, L(idx).name);
-end
 
 
 function params = local_merge_struct(params, override)
@@ -642,11 +637,11 @@ if isfield(cfg.viz, 'state_space_consensus') && ...
 else
     state_cmap = [ ...
         0.34, 0.36, 0.38; ...
-        0.86, 0.74, 0.42; ...
-        0.45, 0.64, 0.90; ...
-        0.86, 0.55, 0.75; ...
-        0.63, 0.53, 0.88; ...
-        0.78, 0.45, 0.60];
+        0.98, 0.72, 0.18; ...
+        0.20, 0.75, 1.00; ...
+        0.78, 0.36, 1.00; ...
+        0.16, 0.86, 0.56; ...
+        1.00, 0.22, 0.22];
 end
 
 max_code = 5;
@@ -661,6 +656,27 @@ if size(state_cmap, 1) < needed_rows
 end
 
 colors = state_cmap(2:needed_rows, :);
+end
+
+
+function labels = local_build_consensus_event_labels(C)
+labels = {'theta', 'gamma', 'ripple', 'theta-gamma', 'sharp-wave-ripple'};
+if ~isfield(C, 'state_catalog') || isempty(C.state_catalog) || ...
+        ~isfield(C.state_catalog, 'code') || ~isfield(C.state_catalog, 'label')
+    return;
+end
+
+catalog_codes = double([C.state_catalog.code]);
+max_code = max(5, max(catalog_codes));
+labels = cell(max_code, 1);
+for code = 1:max_code
+    idx = find(catalog_codes == code, 1, 'first');
+    if isempty(idx)
+        labels{code} = sprintf('state %d', code);
+    else
+        labels{code} = char(string(C.state_catalog(idx).label));
+    end
+end
 end
 
 

@@ -24,6 +24,7 @@ if nargin < 3 || isempty(params)
 end
 
 params = local_apply_defaults(params);
+params.save_results = false;
 [C_time_by_comp, source_meta, inferred_dt, source_evalues, mode_weights] = ...
     local_extract_components(dr_input);
 
@@ -93,46 +94,9 @@ if params.save_figure
     if exist(params.figure_dir, 'dir') ~= 7
         mkdir(params.figure_dir);
     end
+    drawnow;
     exportgraphics(figs.summary, E.artifacts.figure_file, ...
         'Resolution', params.figure_resolution);
-end
-
-if params.save_results
-    if exist(params.save_dir, 'dir') ~= 7
-        mkdir(params.save_dir);
-    end
-
-    event_table = E.event_table; %#ok<NASGU>
-    event_rate = E.event_rate_time_by_component; %#ok<NASGU>
-    event_rate_time_by_component = E.event_rate_time_by_component; %#ok<NASGU>
-    smoothed_event_rate = E.smoothed_event_rate_time_by_component; %#ok<NASGU>
-    event_occupancy = E.event_occupancy_time_by_component; %#ok<NASGU>
-    event_presence = E.event_presence_time_by_component; %#ok<NASGU>
-    thresholds = E.threshold_by_component; %#ok<NASGU>
-    threshold_by_component = E.threshold_by_component; %#ok<NASGU>
-    component_timescales = E.component_timescales; %#ok<NASGU>
-    component_evalues = E.component_evalues_discrete; %#ok<NASGU>
-    component_evalue_info = E.component_evalue_info; %#ok<NASGU>
-    t_centers = E.t_centers; %#ok<NASGU>
-    component_index = E.component_index; %#ok<NASGU>
-    source_meta = E.meta; %#ok<NASGU>
-    params_saved = E.params; %#ok<NASGU>
-
-    if params.save_v7_3
-        save(E.artifacts.mat_file, 'E', 'event_table', 'event_rate', ...
-            'event_rate_time_by_component', 'smoothed_event_rate', ...
-            'event_occupancy', 'event_presence', 'thresholds', ...
-            'threshold_by_component', 'component_timescales', ...
-            'component_evalues', 'component_evalue_info', 't_centers', ...
-            'component_index', 'source_meta', 'params_saved', '-v7.3');
-    else
-        save(E.artifacts.mat_file, 'E', 'event_table', 'event_rate', ...
-            'event_rate_time_by_component', 'smoothed_event_rate', ...
-            'event_occupancy', 'event_presence', 'thresholds', ...
-            'threshold_by_component', 'component_timescales', ...
-            'component_evalues', 'component_evalue_info', 't_centers', ...
-            'component_index', 'source_meta', 'params_saved');
-    end
 end
 
 if params.close_figure && isfield(figs, 'summary') && ...

@@ -255,7 +255,7 @@ Related scripts explicitly set:
 The official current processed event file for `E10gb1` was refreshed with
 this metadata:
 
-- `E:\DataPons_processed\e10gb1\event_detection\e10gb1_bandpass_events_3bands.mat`
+- `E:\DataPons_processed\e10gb1\pipeline2_event_detection\e10gb1_bandpass_events_3bands.mat`
 
 ## Recommended Next Step
 

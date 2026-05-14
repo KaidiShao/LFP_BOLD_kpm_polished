@@ -1,8 +1,8 @@
 param(
     [string]$ExperimentName = "bold_local_20260423",
     [string]$LocalOutputRootBase = "E:\autodl_results_local\bold",
-    [string[]]$ObservableModes = @("eleHP", "HP", "roi_mean", "slow_band_power", "svd", "HP_svd100", "global_svd100"),
-    [string[]]$ResidualForms = @("projected_kv", "projected_vlambda"),
+    [string[]]$ObservableModes = @("eleHP", "HP", "roi_mean", "roi_mean_slow_band_power", "slow_band_power", "slow_band_power_svd", "svd", "HP_svd100", "global_svd100", "gsvd100_ds", "global_slow_band_power_svd100"),
+    [string[]]$ResidualForms = @("projected_vlambda"),
     [ValidateSet("e10gb1", "e10gh1", "e10fV1", "f12m01")]
     [string]$StartWithDataset = "e10gb1",
     [switch]$OnlyStartDataset,
@@ -12,6 +12,7 @@ param(
     [switch]$ExportPsi,
     [ValidateSet("cpu", "gpu")]
     [string]$SelectedDevice = "gpu",
+    [string]$SolverName = "resdmd_batch",
     [int]$Epochs = 30,
     [int]$BatchSize = 2000,
     [int]$ChunkSize = 5000,
@@ -19,6 +20,11 @@ param(
     [double]$TrainRatio = 0.7,
     [double]$Reg = 0.1,
     [double]$LearningRate = 1e-4,
+    [int]$InnerEpochs = 5,
+    [int]$Seed = 100,
+    [switch]$TrainShuffle,
+    [ValidateSet("dual", "pre_only")]
+    [string]$SpectralSyncMode = "dual",
     [int[]]$LayerSizes = @(100, 100, 100),
     [string]$PythonExe = "python",
     [switch]$DryRun
@@ -30,15 +36,16 @@ $ErrorActionPreference = "Stop"
 $repoRoot = "D:\Onedrive\ICPBR\Alberta\koopman_events\LFP_BOLD_kpm_polished"
 $runner = Join-Path $repoRoot "python_scripts\autodl\run_autodl_reskoopnet_mlp.py"
 $solverDir = Join-Path $repoRoot "python_scripts\autodl"
-$boldRoot = "E:\DataPons_processed\bold_observables"
+$boldRoot = "E:\DataPons_processed"
 
 function Get-ObservableFile {
     param(
+        [string]$DatasetStem,
         [string]$DatasetId,
         [string]$Mode
     )
 
-    return Join-Path (Join-Path $boldRoot $DatasetId) ("{0}_bold_observables_{1}.mat" -f $DatasetId, $Mode)
+    return Join-Path (Join-Path (Join-Path $boldRoot $DatasetStem) "pipeline3_bold_observables") ("{0}_bold_observables_{1}.mat" -f $DatasetId, $Mode)
 }
 
 function Test-LocalRunComplete {
@@ -114,7 +121,7 @@ if (Test-Path -LiteralPath $runner -PathType Leaf) {
 
 foreach ($dataset in $datasets) {
     foreach ($mode in $ObservableModes) {
-        $file = Get-ObservableFile -DatasetId $dataset.DatasetId -Mode $mode
+        $file = Get-ObservableFile -DatasetStem $dataset.DatasetStem -DatasetId $dataset.DatasetId -Mode $mode
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
             throw "Missing BOLD observable file for $($dataset.DatasetId) / ${mode}: $file"
         }
@@ -148,23 +155,23 @@ foreach ($dataset in $datasets) {
                 continue
             }
 
-            $dataFile = Get-ObservableFile -DatasetId $datasetId -Mode $mode
+            $dataFile = Get-ObservableFile -DatasetStem $datasetStem -DatasetId $datasetId -Mode $mode
             $consoleLog = Join-Path $consoleLogParent ("{0}.log" -f $runLabel)
 
             $cmdArgs = @(
                 $runner,
                 "--project-root", $repoRoot,
                 "--solver-dir", $solverDir,
-                "--data-root", $boldRoot,
+                "--data-root", (Join-Path $boldRoot $datasetStem),
                 "--output-parent", $outputParent,
                 "--checkpoint-parent", $checkpointParent,
                 "--log-parent", $logParent,
                 "--run-name-base", "mlp_obs",
                 "--experiment-name", $datasetExperimentName,
                 "--selected-device", $SelectedDevice,
-                "--solver-name", "resdmd_batch",
+                "--solver-name", $SolverName,
                 "--residual-form", $residualForm,
-                "--data-subdir", $datasetId,
+                "--data-subdir", "pipeline3_bold_observables",
                 "--dataset-stem", $datasetStem,
                 "--observable-mode", $mode,
                 "--data-filename", (Split-Path -Leaf $dataFile),
@@ -179,8 +186,10 @@ foreach ($dataset in $datasets) {
                 "--lr", [string]$LearningRate,
                 "--log-interval", "1",
                 "--lr-decay-factor", "0.8",
-                "--inner-epochs", "5",
+                "--inner-epochs", [string]$InnerEpochs,
                 "--end-condition", "1e-9",
+                "--seed", [string]$Seed,
+                "--spectral-sync-mode", $SpectralSyncMode,
                 "--chunk-size", [string]$ChunkSize,
                 "--layer-sizes"
             )
@@ -191,6 +200,9 @@ foreach ($dataset in $datasets) {
             } else {
                 $cmdArgs += "--fresh-checkpoints"
             }
+            if ($TrainShuffle) {
+                $cmdArgs += "--train-shuffle"
+            }
             if ($ExportPsi) {
                 $cmdArgs += "--export-psi"
             }
@@ -200,6 +212,9 @@ foreach ($dataset in $datasets) {
             Write-Host ("Starting local BOLD MLP ResKoopNet: {0}" -f $runLabel)
             Write-Host ("Data file: {0}" -f $dataFile)
             Write-Host ("Console log: {0}" -f $consoleLog)
+            Write-Host ("Solver: {0}" -f $SolverName)
+            Write-Host ("Seed: {0}" -f $Seed)
+            Write-Host ("Training schedule: shuffle={0}, spectral_sync_mode={1}, inner_epochs={2}" -f ([bool]$TrainShuffle), $SpectralSyncMode, $InnerEpochs)
             Write-Host ("=" * 80)
 
             if ($DryRun) {

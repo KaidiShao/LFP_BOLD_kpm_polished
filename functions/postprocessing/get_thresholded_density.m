@@ -172,6 +172,7 @@ if params.make_figure || params.save_figure
         if exist(params.figure_dir, 'dir') ~= 7
             mkdir(params.figure_dir);
         end
+        drawnow;
         exportgraphics(fig, fig_path, 'Resolution', params.figure_resolution);
     end
 end
@@ -180,16 +181,29 @@ if params.save_results
     if exist(params.save_dir, 'dir') ~= 7
         mkdir(params.save_dir);
     end
-    density = D.density_time_by_mode; %#ok<NASGU>
-    thresholds = D.threshold_by_mode; %#ok<NASGU>
-    t_centers = D.t_centers; %#ok<NASGU>
-    params_saved = D.params; %#ok<NASGU>
+    density = D.density_time_by_mode;
+    density_time_by_mode = D.density_time_by_mode;
+    thresholds = D.threshold_by_mode;
+    threshold_by_mode = D.threshold_by_mode;
+    t_centers = D.t_centers;
+    mode_index = D.mode_index;
+    selected_mode_idx_in_original = D.selected_mode_idx_in_original;
+    params = D.params;
+    params_saved = D.params;
+    summary = D.summary;
+    artifacts = D.artifacts;
+    input = D.input;
     if params.save_v7_3
-        save(mat_path, 'D', 'density', 'thresholds', 't_centers', ...
-            'params_saved', '-v7.3');
+        save(mat_path, 'density', 'density_time_by_mode', ...
+            'thresholds', 'threshold_by_mode', 't_centers', ...
+            'mode_index', 'selected_mode_idx_in_original', ...
+            'params', 'params_saved', 'summary', 'artifacts', 'input', ...
+            '-v7.3');
     else
-        save(mat_path, 'D', 'density', 'thresholds', 't_centers', ...
-            'params_saved');
+        save(mat_path, 'density', 'density_time_by_mode', ...
+            'thresholds', 'threshold_by_mode', 't_centers', ...
+            'mode_index', 'selected_mode_idx_in_original', ...
+            'params', 'params_saved', 'summary', 'artifacts', 'input');
     end
 end
 end

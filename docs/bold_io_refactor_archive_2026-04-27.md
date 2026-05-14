@@ -227,7 +227,7 @@ Templates aligned to the new contract:
 
 Visualization scripts aligned to strict `R.name` behavior:
 
-- `scripts/plot_bold_reskoopnet_mode_activation_map_reference_style.m`
+- `functions/postprocessing/plot_bold_activation_map_reference_style.m`
 - `scripts/script_generate_missing_bold_activation_maps.m`
 - `scripts/script_run_one_bold_reskoopnet_post_xcorr_activation_maps.m`
 

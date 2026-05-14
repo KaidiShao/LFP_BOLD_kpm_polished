@@ -23,14 +23,16 @@ cfg.plot.between_gap = 2.2;
 cfg.plot.trace_linewidth = 0.4;
 
 output_root = io_project.get_project_processed_root();
-window_result_file = fullfile(output_root, cfg.file_stem, 'event_diversity_windows', ...
+window_result_file = fullfile( ...
+    io_project.get_pipeline_stage_dir(output_root, cfg, 2, 'event_diversity_windows'), ...
     [cfg.file_stem, '_event_diversity_windows_6000samp_globalwin.mat']);
 
 S = load(window_result_file, 'W');
 W = S.W;
 local_validate_e10gb1_diversity_result(W, window_result_file);
 params = struct();
-params.save_dir = fullfile(output_root, cfg.file_stem, 'event_diversity_windows', 'top_window_plots');
+params.save_dir = io_project.get_pipeline_stage_dir( ...
+    output_root, cfg, 2, 'figures_event_diversity_top_window_plots');
 params.save_png = true;
 params.close_after_save = true;
 params.skip_existing = false;

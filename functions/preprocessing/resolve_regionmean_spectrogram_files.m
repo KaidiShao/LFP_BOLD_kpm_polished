@@ -27,7 +27,7 @@ else
 end
 pad_tag = strrep(pad_tag, '.', 'p');
 
-save_dir = fullfile(output_root, cfg.file_stem, 'spectrograms');
+save_dir = io_project.get_pipeline_stage_dir(output_root, cfg, 1, 'spectrograms');
 
 abs_name = [cfg.file_stem, pad_tag, '_regionmean_spectrograms_abs.mat'];
 complex_name = [cfg.file_stem, pad_tag, '_regionmean_spectrograms_complex.mat'];

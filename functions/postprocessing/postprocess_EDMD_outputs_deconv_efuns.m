@@ -2,7 +2,8 @@ function [EDMD_outputs, fig, deconv] = postprocess_EDMD_outputs_deconv_efuns(EDM
 %POSTPROCESS_EDMD_OUTPUTS_DECONV_EFUNS  Estimate internal perturbations from Koopman eigenfunctions.
 %
 % This function:
-%   1) Builds the "ALL" (thresholded & sorted) and "SELECTED" (first K) eigenfunction sets
+%   1) Builds the "THRESHOLDED" (sorted after abs-threshold) and
+%      "SELECTED" (thresholded first K) eigenfunction sets
 %      following the same logic used by postprocess_EDMD_outputs.m.
 %   2) Estimates an internal perturbation signal u(:,j) for each eigenfunction phi(:,j)
 %      using either:
@@ -14,7 +15,7 @@ function [EDMD_outputs, fig, deconv] = postprocess_EDMD_outputs_deconv_efuns(EDM
 %      (same style as postprocess_EDMD_outputs.m)
 %   4) Optionally saves the deconvolved eigenfunctions to disk.
 %   5) Optionally plots a diagnostic figure (2x7 layout) with 4 heatmaps:
-%        (ALL abs, SELECTED abs, ALL real, SELECTED real)
+%        (THRESHOLDED abs, SELECTED abs, THRESHOLDED real, SELECTED real)
 %
 % Inputs
 %   EDMD_outputs : struct (ideally already processed by postprocess_EDMD_outputs)
@@ -42,7 +43,7 @@ function [EDMD_outputs, fig, deconv] = postprocess_EDMD_outputs_deconv_efuns(EDM
 %   cfg.K               = 1e-2;        % Wiener constant (noise-to-signal ratio)
 %   cfg.snrDb           = [];          % alternative: K = 10^(-snrDb/10)
 %
-%   cfg.max_modes_all   = Inf;         % cap number of modes in ALL set (for speed)
+%   cfg.max_modes_all   = Inf;         % cap number of modes in THRESHOLDED set (for speed)
 %   cfg.max_modes_sel   = Inf;         % cap number of modes in SELECTED set
 %
 %   cfg.do_plot         = true;
@@ -116,7 +117,7 @@ cfg = local_set_default(cfg, 'save_dir',       '');
 cfg = local_set_default(cfg, 'save_prefix',    'deconv');
 cfg = local_set_default(cfg, 'save_v7_3',      true);
 
-% -------------------- build ALL and SELECTED sets --------------------
+% -------------------- build THRESHOLDED and SELECTED sets --------------------
 [efuns_all, evalues_all, efuns_sel, evalues_sel, meta] = local_get_sets(EDMD_outputs);
 
 T = size(efuns_all, 1);
@@ -127,7 +128,7 @@ K_all_use = min(K_all, cfg.max_modes_all);
 K_sel_use = min(K_sel, cfg.max_modes_sel);
 K_deconv  = min(K_all, max(K_all_use, K_sel_use));
 
-% Check whether SELECTED set matches the prefix of ALL set.
+% Check whether SELECTED set matches the prefix of the THRESHOLDED set.
 % If not, SELECTED will be deconvolved separately so that plots/saved data are correct.
 Kcmp = min(K_sel_use, K_all);
 tol_prefix = 1e-12;
@@ -169,7 +170,7 @@ for j = 1:K_deconv
     K_used(j)       = info.K;
 end
 
-% If SELECTED is not a prefix of ALL, deconvolve SELECTED separately.
+% If SELECTED is not a prefix of THRESHOLDED, deconvolve SELECTED separately.
 U_sel = [];
 impulseLen_sel = [];
 lambda_d_sel = [];
@@ -197,7 +198,7 @@ end
 U_abs  = local_normalize_cols_excluding(abs(U), cfg.normalize_exclude_idx);
 U_real = local_normalize_cols_excluding(real(U), cfg.normalize_exclude_idx);
 
-% ALL and SELECTED views
+% THRESHOLDED and SELECTED views
 deconv = struct();
 deconv.cfg = cfg;
 deconv.meta = meta;
@@ -210,6 +211,7 @@ deconv.lambda_source_formula = local_lambda_source_formula(cfg);
 deconv.evalues_ref_all = evalues_all_use;
 deconv.evalues_all = lambda_bundle_all.used_input;
 deconv.evalues_used_all = lambda_bundle_all.used_input;
+deconv.mode_index_all = local_trim_mode_indices(meta.thresholded_mode_index, K_all_use);
 deconv.lambda_d    = lambda_d_used;
 deconv.impulseLen  = impulseLen;
 deconv.wienerK     = K_used;
@@ -221,6 +223,7 @@ if is_sel_prefix
     deconv.evalues_ref_sel = evalues_sel_use;
     deconv.evalues_sel = lambda_bundle_sel.used_input;
     deconv.evalues_used_sel = lambda_bundle_sel.used_input;
+    deconv.mode_index_sel = local_trim_mode_indices(meta.selected_mode_index, K_sel_use);
     deconv.lambda_d_sel = lambda_bundle_all.used_discrete(1:K_sel_use);
     deconv.empirical_fit_sel = local_trim_empirical_fit(lambda_bundle_all.empirical_fit, K_sel_use);
 else
@@ -228,6 +231,7 @@ else
     deconv.evalues_ref_sel = evalues_sel_use;
     deconv.evalues_sel = lambda_bundle_sel.used_input;
     deconv.evalues_used_sel = lambda_bundle_sel.used_input;
+    deconv.mode_index_sel = local_trim_mode_indices(meta.selected_mode_index, K_sel_use);
     deconv.lambda_d_sel = lambda_d_sel;
     deconv.impulseLen_sel = impulseLen_sel;
     deconv.wienerK_sel = K_sel_wiener;
@@ -259,6 +263,8 @@ deconv.plot_view.abs_all = A_abs_all;
 deconv.plot_view.abs_sel = A_abs_sel;
 deconv.plot_view.real_all = A_re_all;
 deconv.plot_view.real_sel = A_re_sel;
+deconv.plot_view.mode_index_all = deconv.mode_index_all;
+deconv.plot_view.mode_index_sel = deconv.mode_index_sel;
 
 if isempty(cfg.time_vec)
     deconv.plot_view.x = t_plot;
@@ -315,24 +321,51 @@ function [efuns_all, evalues_all, efuns_sel, evalues_sel, meta] = local_get_sets
         if size(f_full, 2) ~= numel(e_full)
             error('Dimension mismatch: original_sorted.efuns columns != numel(original_sorted.evalues).');
         end
+        idx_sorted_in_original = local_original_sorted_indices(EDMD_outputs, numel(e_full));
 
-        if isfield(EDMD_outputs.original_sorted, 'abs_thresh')
-            abs_thresh = EDMD_outputs.original_sorted.abs_thresh;
-        elseif isfield(EDMD_outputs, 'masked') && isfield(EDMD_outputs.masked, 'abs_thresh')
-            abs_thresh = EDMD_outputs.masked.abs_thresh;
+        if isfield(EDMD_outputs, 'thresholded_sorted') && ...
+                isfield(EDMD_outputs.thresholded_sorted, 'evalues') && ...
+                isfield(EDMD_outputs.thresholded_sorted, 'efuns')
+            evalues_all = EDMD_outputs.thresholded_sorted.evalues(:);
+            efuns_all = EDMD_outputs.thresholded_sorted.efuns;
+            if size(efuns_all, 2) ~= numel(evalues_all)
+                error('Dimension mismatch: thresholded_sorted.efuns columns != numel(thresholded_sorted.evalues).');
+            end
+            if isfield(EDMD_outputs.thresholded_sorted, 'abs_thresh')
+                meta.abs_thresh = EDMD_outputs.thresholded_sorted.abs_thresh;
+            else
+                meta.abs_thresh = [];
+            end
+            meta.source = 'thresholded_sorted';
+            if isfield(EDMD_outputs.thresholded_sorted, 'idx_in_original')
+                thresholded_mode_index = EDMD_outputs.thresholded_sorted.idx_in_original(:);
+            else
+                thresholded_mode_index = local_thresholded_indices_from_sorted( ...
+                    e_full, idx_sorted_in_original, meta.abs_thresh, numel(evalues_all));
+            end
+            meta.thresholded_mode_index = local_validate_mode_indices( ...
+                thresholded_mode_index, numel(evalues_all), 'thresholded');
         else
-            abs_thresh = 0;
-        end
+            if isfield(EDMD_outputs.original_sorted, 'abs_thresh')
+                abs_thresh = EDMD_outputs.original_sorted.abs_thresh;
+            elseif isfield(EDMD_outputs, 'masked') && isfield(EDMD_outputs.masked, 'abs_thresh')
+                abs_thresh = EDMD_outputs.masked.abs_thresh;
+            else
+                abs_thresh = 0;
+            end
 
-        mask_sorted = abs(e_full) > abs_thresh;
-        if ~any(mask_sorted)
-            error('All eigenvalues removed by abs_thresh=%g in original_sorted.', abs_thresh);
-        end
+            mask_sorted = abs(e_full) > abs_thresh;
+            if ~any(mask_sorted)
+                error('All eigenvalues removed by abs_thresh=%g in original_sorted.', abs_thresh);
+            end
 
-        efuns_all   = f_full(:, mask_sorted);
-        evalues_all = e_full(mask_sorted);
-        meta.abs_thresh = abs_thresh;
-        meta.source = 'original_sorted + abs_thresh';
+            efuns_all   = f_full(:, mask_sorted);
+            evalues_all = e_full(mask_sorted);
+            meta.abs_thresh = abs_thresh;
+            meta.source = 'original_sorted thresholded by abs_thresh';
+            meta.thresholded_mode_index = local_validate_mode_indices( ...
+                idx_sorted_in_original(mask_sorted), numel(evalues_all), 'thresholded');
+        end
 
     else
         if ~isfield(EDMD_outputs, 'evalues') || ~isfield(EDMD_outputs, 'efuns')
@@ -344,6 +377,8 @@ function [efuns_all, evalues_all, efuns_sel, evalues_sel, meta] = local_get_sets
             error('Dimension mismatch: efuns columns != numel(evalues).');
         end
         meta.source = 'EDMD_outputs.evalues/efuns';
+        meta.thresholded_mode_index = local_validate_mode_indices( ...
+            local_selected_mode_indices(EDMD_outputs, numel(evalues_all)), numel(evalues_all), 'thresholded');
     end
 
     % SELECTED set: prefer EDMD_outputs.evalues/efuns if present (already truncated)
@@ -359,8 +394,79 @@ function [efuns_all, evalues_all, efuns_sel, evalues_sel, meta] = local_get_sets
     end
 
     if size(efuns_sel, 1) ~= size(efuns_all, 1)
-        error('Time dimension mismatch between ALL and SELECTED eigenfunctions.');
+        error('Time dimension mismatch between THRESHOLDED and SELECTED eigenfunctions.');
     end
+    selected_mode_index = local_selected_mode_indices(EDMD_outputs, numel(evalues_sel));
+    if numel(selected_mode_index) ~= numel(evalues_sel) && ...
+            numel(meta.thresholded_mode_index) >= numel(evalues_sel)
+        selected_mode_index = meta.thresholded_mode_index(1:numel(evalues_sel));
+    end
+    meta.selected_mode_index = local_validate_mode_indices( ...
+        selected_mode_index, numel(evalues_sel), 'selected');
+end
+
+function idx = local_original_sorted_indices(EDMD_outputs, n)
+% Return original-coordinate indices for original_sorted rows when available.
+    idx = [];
+    if isfield(EDMD_outputs, 'original_sorted') && ...
+            isfield(EDMD_outputs.original_sorted, 'idx_in_original')
+        idx = EDMD_outputs.original_sorted.idx_in_original(:);
+    elseif isfield(EDMD_outputs, 'original') && isfield(EDMD_outputs.original, 'evalues')
+        e0 = EDMD_outputs.original.evalues(:);
+        sort_by = 'modulus';
+        sort_dir = 'descend';
+        if isfield(EDMD_outputs, 'original_sorted')
+            if isfield(EDMD_outputs.original_sorted, 'sort_by')
+                sort_by = EDMD_outputs.original_sorted.sort_by;
+            end
+            if isfield(EDMD_outputs.original_sorted, 'sort_dir')
+                sort_dir = EDMD_outputs.original_sorted.sort_dir;
+            end
+        end
+        switch lower(sort_by)
+            case {'modulus','abs'}
+                key = abs(e0);
+            case {'real','realpart'}
+                key = real(e0);
+            otherwise
+                key = abs(e0);
+        end
+        [~, idx] = sort(key, sort_dir);
+        idx = idx(:);
+    end
+    idx = local_validate_mode_indices(idx, n, 'original_sorted');
+end
+
+function idx = local_thresholded_indices_from_sorted(e_full, idx_sorted_in_original, abs_thresh, n_expected)
+    idx = [];
+    if ~isempty(abs_thresh) && isscalar(abs_thresh) && isnumeric(abs_thresh)
+        mask_sorted = abs(e_full) > abs_thresh;
+        idx = idx_sorted_in_original(mask_sorted);
+    end
+    idx = local_validate_mode_indices(idx, n_expected, 'thresholded');
+end
+
+function idx = local_selected_mode_indices(EDMD_outputs, n)
+    idx = [];
+    if isfield(EDMD_outputs, 'idx_final_in_original')
+        idx = EDMD_outputs.idx_final_in_original(:);
+    elseif isfield(EDMD_outputs, 'masked') && isfield(EDMD_outputs.masked, 'idx_in_original')
+        idx = EDMD_outputs.masked.idx_in_original(:);
+    end
+    idx = local_validate_mode_indices(idx, n, 'selected');
+end
+
+function idx = local_validate_mode_indices(idx, n, ~)
+    if isempty(idx) || numel(idx) ~= n || any(~isfinite(double(idx(:))))
+        idx = (1:n).';
+    else
+        idx = idx(:);
+    end
+end
+
+function idx = local_trim_mode_indices(idx, n)
+    idx = local_validate_mode_indices(idx, n, 'trimmed');
+    idx = idx(1:n);
 end
 
 function bundle = local_resolve_lambda_bundle(EDMD_outputs, efuns_use, evalues_use, set_name, cfg)
@@ -640,6 +746,8 @@ function fig = local_plot_deconv(~, deconv, efuns_all, ~, ~, cfg)
     % Select how many modes are available in saved deconv
     K_all_use = size(deconv.norm_efuns.abs_all, 2);
     K_sel_use = size(deconv.norm_efuns.abs_sel, 2);
+    mode_index_all = local_get_plot_mode_indices(deconv, 'mode_index_all', K_all_use);
+    mode_index_sel = local_get_plot_mode_indices(deconv, 'mode_index_sel', K_sel_use);
 
     [A_abs_all, A_abs_sel, A_re_all, A_re_sel, norm_label] = ...
         local_prepare_plot_mats(deconv, t_plot, cfg);
@@ -663,7 +771,7 @@ function fig = local_plot_deconv(~, deconv, efuns_all, ~, ~, cfg)
     hold off;
     grid on; axis equal; axis([-1.1, 1.1, -1.1, 1.1]);
     xlabel('Re(\lambda)'); ylabel('Im(\lambda)');
-    title(sprintf('Eigenvalues used (%s)', lambda_label), 'Interpreter', 'none');
+    title(sprintf('Thresholded eigenvalues used (%s)', lambda_label), 'Interpreter', 'none');
 
     % (2,1) selected eigenvalues
     subplot(2,7,8);
@@ -694,13 +802,14 @@ function fig = local_plot_deconv(~, deconv, efuns_all, ~, ~, cfg)
         use_cmap = cfg.colormap_fun;
     end
 
-    % (1,2) ALL abs
+    % (1,2) THRESHOLDED abs
     subplot(2,7,2:4);
     imagesc(x, 1:size(A_abs_all,1), A_abs_all);
     if cfg.draw_border && ~isempty(session_border), xline(session_border, 'k--'); end
     set(gca, 'YDir', 'reverse');
-    xlabel(xlab); ylabel('Eigenfunction #');
-    title(sprintf('|%s| (ALL, K=%d, %s, %s)', signal_label, K_all_use, lambda_label, norm_label), 'Interpreter', 'none');
+    xlabel(xlab);
+    local_apply_mode_axis(gca, mode_index_all, 'Thresholded mode (orig #)');
+    title(sprintf('|%s| (THRESHOLDED modes, K=%d, %s, %s)', signal_label, K_all_use, lambda_label, norm_label), 'Interpreter', 'none');
     colorbar;
     colormap(use_cmap());
 
@@ -709,18 +818,20 @@ function fig = local_plot_deconv(~, deconv, efuns_all, ~, ~, cfg)
     imagesc(x, 1:size(A_abs_sel,1), A_abs_sel);
     if cfg.draw_border && ~isempty(session_border), xline(session_border, 'k--'); end
     set(gca, 'YDir', 'reverse');
-    xlabel(xlab); ylabel('Eigenfunction #');
-    title(sprintf('|%s| (SELECTED, K=%d, %s, %s)', signal_label, K_sel_use, lambda_label, norm_label), 'Interpreter', 'none');
+    xlabel(xlab);
+    local_apply_mode_axis(gca, mode_index_sel, 'Selected mode (orig #)');
+    title(sprintf('|%s| (SELECTED modes, K=%d, %s, %s)', signal_label, K_sel_use, lambda_label, norm_label), 'Interpreter', 'none');
     colorbar;
     colormap(use_cmap());
 
-    % (1,3) ALL real
+    % (1,3) THRESHOLDED real
     subplot(2,7,5:7);
     imagesc(x, 1:size(A_re_all,1), A_re_all);
     if cfg.draw_border && ~isempty(session_border), xline(session_border, 'k--'); end
     set(gca, 'YDir', 'reverse');
-    xlabel(xlab); ylabel('Eigenfunction #');
-    title(sprintf('Re(%s) (ALL, K=%d, %s, %s)', signal_label, K_all_use, lambda_label, norm_label), 'Interpreter', 'none');
+    xlabel(xlab);
+    local_apply_mode_axis(gca, mode_index_all, 'Thresholded mode (orig #)');
+    title(sprintf('Re(%s) (THRESHOLDED modes, K=%d, %s, %s)', signal_label, K_all_use, lambda_label, norm_label), 'Interpreter', 'none');
     colorbar;
     colormap(use_cmap());
 
@@ -729,13 +840,35 @@ function fig = local_plot_deconv(~, deconv, efuns_all, ~, ~, cfg)
     imagesc(x, 1:size(A_re_sel,1), A_re_sel);
     if cfg.draw_border && ~isempty(session_border), xline(session_border, 'k--'); end
     set(gca, 'YDir', 'reverse');
-    xlabel(xlab); ylabel('Eigenfunction #');
-    title(sprintf('Re(%s) (SELECTED, K=%d, %s, %s)', signal_label, K_sel_use, lambda_label, norm_label), 'Interpreter', 'none');
+    xlabel(xlab);
+    local_apply_mode_axis(gca, mode_index_sel, 'Selected mode (orig #)');
+    title(sprintf('Re(%s) (SELECTED modes, K=%d, %s, %s)', signal_label, K_sel_use, lambda_label, norm_label), 'Interpreter', 'none');
     colorbar;
     colormap(use_cmap());
 
     % Reasonable default size
     set(fig, 'Position', [1440, 654, 1531, 584]);
+end
+
+function idx = local_get_plot_mode_indices(deconv, field_name, n)
+    idx = [];
+    if isfield(deconv, field_name)
+        idx = deconv.(field_name);
+    end
+    idx = local_trim_mode_indices(idx, n);
+end
+
+function local_apply_mode_axis(ax, mode_index, label_text)
+    n = numel(mode_index);
+    max_ticks = 12;
+    if n <= max_ticks
+        tick_idx = 1:n;
+    else
+        tick_idx = unique(round(linspace(1, n, max_ticks)));
+    end
+    tick_label = arrayfun(@(x) sprintf('%d', x), mode_index(tick_idx), 'UniformOutput', false);
+    set(ax, 'YTick', tick_idx, 'YTickLabel', tick_label, 'TickLabelInterpreter', 'none');
+    ylabel(ax, label_text, 'Interpreter', 'none');
 end
 
 

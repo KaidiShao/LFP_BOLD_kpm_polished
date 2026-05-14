@@ -537,8 +537,7 @@ pad_tag = strrep(pad_tag, '.', 'p');
 
 target_name = [cfg.file_stem, pad_tag, '_regionmean_spectrograms_abs.mat'];
 search_dirs = { ...
-    fullfile(output_root, cfg.file_stem, 'spectrograms'), ...
-    fullfile(output_root, 'spectrograms', cfg.file_stem)};
+    io_project.get_pipeline_stage_dir(output_root, cfg, 1, 'spectrograms')};
 
 for i = 1:numel(search_dirs)
     f = fullfile(search_dirs{i}, target_name);
@@ -603,7 +602,7 @@ if ischar(event_input) || isstring(event_input)
     return;
 end
 
-search_dir = fullfile(output_root, cfg.file_stem, 'event_detection');
+search_dir = io_project.get_pipeline_stage_dir(output_root, cfg, 2, 'event_detection');
 pattern = fullfile(search_dir, [cfg.file_stem, '_bandpass_events_*.mat']);
 L = dir(pattern);
 if isempty(L)

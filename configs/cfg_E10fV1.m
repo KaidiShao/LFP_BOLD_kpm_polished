@@ -26,16 +26,22 @@ cfg.sessions(1).include = true;
 cfg.sessions(1).selected_channels = cfg.channels.selected_all;
 cfg.sessions(1).notes = 'polar'; % polar visual stimulation
 
-cfg.sessions(2).session_id = 6:25;
+cfg.sessions(2).session_id = 6:20;
 cfg.sessions(2).include = true;
 cfg.sessions(2).selected_channels = cfg.channels.selected_all;
 cfg.sessions(2).notes = 'spont'; % spontaneous
+
+cfg.sessions(3).session_id = 21:25;
+cfg.sessions(3).include = false;
+cfg.sessions(3).selected_channels = [];
+cfg.sessions(3).notes = 'vspont'; % spontaneous block collected during the visual-stim protocol
+
 
 %% BOLD ROI naming
 cfg.bold = struct();
 cfg.bold.data_subfolder = 'roits';
 cfg.bold.input_var = 'roiTs';
 cfg.bold.role_map = struct();
-cfg.bold.role_map.elehp = 'eleHP';
+cfg.bold.role_map.elehp = 'ele_HP';
 cfg.bold.role_map.hp = 'HP';
 end

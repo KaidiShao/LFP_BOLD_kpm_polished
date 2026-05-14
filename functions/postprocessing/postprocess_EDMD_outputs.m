@@ -101,10 +101,13 @@ modes_sorted_full   = modes0(ord_full, :);
 EDMD_outputs.original_sorted.evalues    = evalues_sorted_full;
 EDMD_outputs.original_sorted.efuns      = efuns_sorted_full;
 EDMD_outputs.original_sorted.kpm_modes  = modes_sorted_full;
+EDMD_outputs.original_sorted.norm_efuns.real = local_normalize_efun(efuns_sorted_full, 'real');
+EDMD_outputs.original_sorted.norm_efuns.abs  = local_normalize_efun(efuns_sorted_full, 'abs');
 EDMD_outputs.original_sorted.sort_by    = opts.sort_by;
 EDMD_outputs.original_sorted.sort_dir   = opts.sort_dir;
 EDMD_outputs.original_sorted.abs_thresh = opts.abs_thresh;
 EDMD_outputs.original_sorted.max_basis  = opts.max_basis;
+EDMD_outputs.original_sorted.idx_in_original = ord_full(:);
 
 % -------------------- threshold mask on the FULL sorted set --------------------
 mask_sorted = abs(evalues_sorted_full) > opts.abs_thresh;
@@ -122,11 +125,20 @@ EDMD_outputs.mask = mask_thresh0;
 evalues_masked = evalues_sorted_full(mask_sorted);
 efuns_masked   = efuns_sorted_full(:, mask_sorted);
 modes_masked   = modes_sorted_full(mask_sorted, :);
+idx_thresholded_in_original = ord_full(mask_sorted);
 
 
 
 EDMD_outputs.norm_efuns.real = local_normalize_efun(efuns_masked, 'real');
 EDMD_outputs.norm_efuns.abs  = local_normalize_efun(efuns_masked, 'abs');
+EDMD_outputs.thresholded_sorted.evalues = evalues_masked;
+EDMD_outputs.thresholded_sorted.efuns = efuns_masked;
+EDMD_outputs.thresholded_sorted.kpm_modes = modes_masked;
+EDMD_outputs.thresholded_sorted.norm_efuns = EDMD_outputs.norm_efuns;
+EDMD_outputs.thresholded_sorted.abs_thresh = opts.abs_thresh;
+EDMD_outputs.thresholded_sorted.sort_by = opts.sort_by;
+EDMD_outputs.thresholded_sorted.sort_dir = opts.sort_dir;
+EDMD_outputs.thresholded_sorted.idx_in_original = idx_thresholded_in_original(:);
 
 
 % Apply max_basis ONLY to masked
@@ -145,8 +157,7 @@ EDMD_outputs.efuns     = efuns_masked;
 EDMD_outputs.kpm_modes = modes_masked;
 
 % Indices of the final selected basis in ORIGINAL coordinates
-idx_sorted_in_original = ord_full(mask_sorted);      % original indices after sorting+threshold
-EDMD_outputs.idx_final_in_original = idx_sorted_in_original(1:Kkeep);
+EDMD_outputs.idx_final_in_original = idx_thresholded_in_original(1:Kkeep);
 
 % Bookkeeping for masked
 EDMD_outputs.masked.evalues    = EDMD_outputs.evalues;
@@ -156,6 +167,7 @@ EDMD_outputs.masked.abs_thresh = opts.abs_thresh;
 EDMD_outputs.masked.sort_by    = opts.sort_by;
 EDMD_outputs.masked.sort_dir   = opts.sort_dir;
 EDMD_outputs.masked.max_basis  = opts.max_basis;
+EDMD_outputs.masked.idx_in_original = EDMD_outputs.idx_final_in_original(:);
 
 
 
@@ -188,10 +200,15 @@ if opts.do_plot
 
     session_border = opts.session_border;
     % Prepare matrices for heatmaps
-    A_abs_orig = EDMD_outputs.norm_efuns.abs(t_plot, :).';   % [K_all x |t_plot|]
-    A_abs_mask = EDMD_outputs.norm_efuns.abs(t_plot, 1:Kkeep).';                   % [K_mask x |t_plot|]
-    A_re_orig  = EDMD_outputs.norm_efuns.real(t_plot, :).';
+    A_abs_orig = EDMD_outputs.original_sorted.norm_efuns.abs(t_plot, :).';   % [K_all x |t_plot|]
+    A_abs_mask = EDMD_outputs.norm_efuns.abs(t_plot, 1:Kkeep).';             % [K_sel x |t_plot|]
+    A_re_orig  = EDMD_outputs.original_sorted.norm_efuns.real(t_plot, :).';
     A_re_mask  = EDMD_outputs.norm_efuns.real(t_plot, 1:Kkeep).';
+    if isfinite(opts.max_basis) && Kkeep < numel(EDMD_outputs.thresholded_sorted.evalues)
+        selected_title_suffix = sprintf('selected top %d after |\\lambda|>%g', Kkeep, opts.abs_thresh);
+    else
+        selected_title_suffix = sprintf('thresholded |\\lambda|>%g', opts.abs_thresh);
+    end
 
     % Layout: use subplot(2,7,...) to make the first column narrow
     fig = figure('Color','w');
@@ -216,7 +233,7 @@ if opts.do_plot
     hold off;
     grid on; axis equal; axis([-1.1,1.1,-1.1,1.1])
     xlabel('Re(\lambda)'); ylabel('Im(\lambda)');
-    title(sprintf('Masked eigenvalues (|\\lambda|>%g)', opts.abs_thresh));
+    title(selected_title_suffix, 'Interpreter', 'tex');
 
     % (1,2) original efuns abs heatmap - wide (columns 2:4)
     subplot(2,7,2:4);
@@ -234,7 +251,7 @@ if opts.do_plot
     if opts.draw_border && ~isempty(session_border), xline(session_border, 'k--'); end
     set(gca, 'YDir','reverse');
     xlabel(xlab); ylabel('Eigenfunction #');
-    title('|eigenfunctions| (masked)');
+    title(sprintf('|eigenfunctions| (%s)', selected_title_suffix), 'Interpreter', 'tex');
     colorbar;
     if ~isempty(use_cmap), colormap(use_cmap()); end
 
@@ -254,7 +271,7 @@ if opts.do_plot
     if opts.draw_border && ~isempty(session_border), xline(session_border, 'k--'); end
     set(gca, 'YDir','reverse');
     xlabel(xlab); ylabel('Eigenfunction #');
-    title('Re(eigenfunctions) (masked)');
+    title(sprintf('Re(eigenfunctions) (%s)', selected_title_suffix), 'Interpreter', 'tex');
     colorbar;
     if ~isempty(use_cmap), colormap(use_cmap()); end
     set(fig, 'Position', [1440         654        1531         584]);

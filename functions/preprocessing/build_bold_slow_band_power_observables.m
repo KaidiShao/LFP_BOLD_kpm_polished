@@ -79,49 +79,20 @@ end
 end
 
 function info = local_build_slow_band_power_info(D, n_var, band_names, include_raw)
-base_info = local_build_base_observable_info(D, n_var);
-
 info = table();
 if include_raw
-    raw_info = base_info;
-    raw_info.observable_idx = (1:height(raw_info)).';
-    raw_info.source(:) = {'bold_raw'};
+    raw_info = build_bold_base_observable_info(D, n_var, 'bold_raw', '');
     info = raw_info;
 end
 
 for i_band = 1:numel(band_names)
-    band_info = base_info;
+    band_info = build_bold_base_observable_info( ...
+        D, n_var, ['bold_' band_names{i_band} '_power'], ['_' band_names{i_band} '_power']);
     band_info.observable_idx = (height(info) + (1:n_var)).';
-    band_info.source(:) = {['bold_' band_names{i_band} '_power']};
-    band_info.observable_label = cellstr(strcat(string(band_info.observable_label), ...
-        "_", band_names{i_band}, "_power"));
     if isempty(info)
         info = band_info;
     else
         info = [info; band_info]; %#ok<AGROW>
     end
-end
-end
-
-function base_info = local_build_base_observable_info(D, n_var)
-observable_idx = (1:n_var).';
-source = repmat({'bold'}, n_var, 1);
-
-if isfield(D, 'variable_labels') && numel(D.variable_labels) == n_var
-    observable_label = cellstr(string(D.variable_labels(:)));
-else
-    observable_label = cellstr(compose("bold_var%04d", observable_idx));
-end
-
-base_info = table(observable_idx, source, observable_label, ...
-    'VariableNames', {'observable_idx', 'source', 'observable_label'});
-
-if isfield(D, 'variable_info') && height(D.variable_info) == n_var
-    extra = D.variable_info;
-    duplicate_names = intersect(base_info.Properties.VariableNames, extra.Properties.VariableNames);
-    if ~isempty(duplicate_names)
-        extra(:, duplicate_names) = [];
-    end
-    base_info = [base_info extra];
 end
 end

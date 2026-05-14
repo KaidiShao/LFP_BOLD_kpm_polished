@@ -1,3 +1,14 @@
+"""
+LEGACY local complex-split batch runner.
+
+This script is kept for archived local experiment reproduction under
+python_scripts/autodl_local_e10gb1/.
+
+Prefer these canonical pipeline 4 launchers instead:
+- python_scripts/local/run_bold_observables_mlp_reskoopnet_local.ps1
+- python_scripts/local/run_bold_observables_mlp_reskoopnet_wsl.sh
+"""
+
 import argparse
 import json
 import subprocess
@@ -9,19 +20,19 @@ from pathlib import Path
 DATASET_CONFIGS = {
     "e10gb1": {
         "dataset_stem": "e10gb1",
-        "data_subdir": "e10gb1/reskoopnet_dictionary",
+        "data_subdir": "e10gb1/pipeline1_reskoopnet_dictionary",
         "data_filename": "e10gb1_low50_high250_g2_complex_split_single.mat",
         "results_subdir": "e10gb1",
     },
     "e10fV1": {
         "dataset_stem": "e10fV1",
-        "data_subdir": "E10fV1/reskoopnet_dictionary",
+        "data_subdir": "e10fV1/pipeline1_reskoopnet_dictionary",
         "data_filename": "e10fV1_low50_high250_g2_complex_split_single.mat",
         "results_subdir": "e10fV1",
     },
     "e10gh1": {
         "dataset_stem": "e10gh1",
-        "data_subdir": "E10gH1/reskoopnet_dictionary",
+        "data_subdir": "e10gh1/pipeline1_reskoopnet_dictionary",
         "data_filename": "e10gh1_low50_high250_g2_complex_split_single.mat",
         "results_subdir": "e10gh1",
     },
@@ -390,6 +401,12 @@ def build_run_cmd(args, dataset_key, residual_form):
 
 def main():
     args = parse_args()
+
+    print(
+        "[legacy] run_local_complex_split_batch.py is a legacy local experiment runner. "
+        "Prefer python_scripts/local/run_bold_observables_mlp_reskoopnet_wsl.sh for canonical local pipeline 4 runs.",
+        file=sys.stderr,
+    )
 
     local_solver_root = build_local_solver_root()
     run_script = build_run_script_path()

@@ -25,6 +25,7 @@ if nargin < 4 || isempty(params)
 end
 
 params = local_apply_defaults(params);
+params.save_results = false;
 local_validate_phi(phi);
 
 if isempty(dt) || ~isnumeric(dt) || ~isscalar(dt) || ~isfinite(dt) || dt <= 0
@@ -193,35 +194,11 @@ if params.make_figure || params.save_figure
         if exist(params.figure_dir, 'dir') ~= 7
             mkdir(params.figure_dir);
         end
+        drawnow;
         exportgraphics(figs.summary, fig_path, 'Resolution', params.figure_resolution);
     end
 end
 
-if params.save_results
-    if exist(params.save_dir, 'dir') ~= 7
-        mkdir(params.save_dir);
-    end
-    event_table = E.event_table; %#ok<NASGU>
-    event_rate = E.event_rate_time_by_mode; %#ok<NASGU>
-    smoothed_event_rate = E.smoothed_event_rate_time_by_mode; %#ok<NASGU>
-    event_occupancy = E.event_occupancy_time_by_mode; %#ok<NASGU>
-    event_presence = E.event_presence_time_by_mode; %#ok<NASGU>
-    thresholds = E.threshold_by_mode; %#ok<NASGU>
-    mode_timescales = E.mode_timescales; %#ok<NASGU>
-    t_centers = E.t_centers; %#ok<NASGU>
-    params_saved = E.params; %#ok<NASGU>
-    if params.save_v7_3
-        save(mat_path, 'E', 'event_table', 'event_rate', ...
-            'smoothed_event_rate', 'event_occupancy', 'event_presence', ...
-            'thresholds', 'mode_timescales', 't_centers', ...
-            'params_saved', '-v7.3');
-    else
-        save(mat_path, 'E', 'event_table', 'event_rate', ...
-            'smoothed_event_rate', 'event_occupancy', 'event_presence', ...
-            'thresholds', 'mode_timescales', 't_centers', ...
-            'params_saved');
-    end
-end
 end
 
 

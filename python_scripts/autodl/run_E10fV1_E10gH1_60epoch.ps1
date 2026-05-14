@@ -17,6 +17,25 @@ $ErrorActionPreference = "Stop"
 $repoRoot = "D:\Onedrive\ICPBR\Alberta\koopman_events\LFP_BOLD_kpm_polished"
 $controller = Join-Path $repoRoot "python_scripts\autodl\dataset_batch_controller_autodl_reskoopnet_mlp.py"
 $pythonExe = "python"
+$processedRoot = "E:\DataPons_processed"
+
+function Get-ObservableFile {
+    param(
+        [string]$DatasetStem,
+        [string]$Mode
+    )
+
+    return Join-Path (Join-Path (Join-Path $processedRoot $DatasetStem) "pipeline1_reskoopnet_dictionary") ("{0}_low50_high250_g2_{1}_single.mat" -f $DatasetStem, $Mode)
+}
+
+function Get-ObservableInfoFile {
+    param(
+        [string]$DatasetStem,
+        [string]$Mode
+    )
+
+    return Join-Path (Join-Path (Join-Path $processedRoot $DatasetStem) "pipeline1_reskoopnet_dictionary") ("{0}_low50_high250_g2_{1}_single_obs_info.csv" -f $DatasetStem, $Mode)
+}
 
 $commonArgs = @(
     $controller,
@@ -26,7 +45,7 @@ $commonArgs = @(
     "--ssh-key", "$HOME\.ssh\id_ed25519_autodl",
     "--observable-modes", "abs",
     "--residual-forms", "projected_kv", "projected_vlambda",
-    "--file-type", ".h5",
+    "--file-type", ".mat",
     "--remote-python", "/root/miniconda3/envs/reskoopnet/bin/python",
     "--epochs", "60",
     "--recover-completed-remote-runs",
@@ -55,19 +74,11 @@ $datasets = @(
         DatasetStem = "e10fV1"
         RemoteDataSubdir = $RemoteDataSubdirE10fV1
         LocalDownloadRoot = "E:\autodl_results\e10fV1\mlp"
-        LocalDataFileAbs = "E:\DataPons_processed\E10fV1\reskoopnet_dictionary\e10fV1_low50_high250_g2_abs_single.mat"
-        LocalObsInfoFileAbs = "E:\DataPons_processed\E10fV1\reskoopnet_dictionary\e10fV1_low50_high250_g2_abs_single_obs_info.csv"
-        LocalDataFileComplexSplit = "E:\DataPons_processed\E10fV1\reskoopnet_dictionary\e10fV1_low50_high250_g2_complex_split_single.mat"
-        LocalObsInfoFileComplexSplit = "E:\DataPons_processed\E10fV1\reskoopnet_dictionary\e10fV1_low50_high250_g2_complex_split_single_obs_info.csv"
     },
     @{
         DatasetStem = "e10gh1"
         RemoteDataSubdir = $RemoteDataSubdirE10gH1
         LocalDownloadRoot = "E:\autodl_results\e10gh1\mlp"
-        LocalDataFileAbs = "E:\DataPons_processed\E10gH1\reskoopnet_dictionary\e10gh1_low50_high250_g2_abs_single.mat"
-        LocalObsInfoFileAbs = "E:\DataPons_processed\E10gH1\reskoopnet_dictionary\e10gh1_low50_high250_g2_abs_single_obs_info.csv"
-        LocalDataFileComplexSplit = "E:\DataPons_processed\E10gH1\reskoopnet_dictionary\e10gh1_low50_high250_g2_complex_split_single.mat"
-        LocalObsInfoFileComplexSplit = "E:\DataPons_processed\E10gH1\reskoopnet_dictionary\e10gh1_low50_high250_g2_complex_split_single_obs_info.csv"
     }
 )
 
@@ -105,10 +116,8 @@ foreach ($dataset in $datasets) {
         "--experiment-name", $datasetExperimentName,
         "--remote-data-subdir", $dataset.RemoteDataSubdir,
         "--local-download-root", $dataset.LocalDownloadRoot,
-        "--local-data-file-abs", $dataset.LocalDataFileAbs,
-        "--local-obs-info-file-abs", $dataset.LocalObsInfoFileAbs,
-        "--local-data-file-complex-split", $dataset.LocalDataFileComplexSplit,
-        "--local-obs-info-file-complex-split", $dataset.LocalObsInfoFileComplexSplit
+        "--local-data-file-abs", (Get-ObservableFile -DatasetStem $dataset.DatasetStem -Mode "abs"),
+        "--local-obs-info-file-abs", (Get-ObservableInfoFile -DatasetStem $dataset.DatasetStem -Mode "abs")
     )
 
     & $pythonExe @commonArgs @datasetArgs

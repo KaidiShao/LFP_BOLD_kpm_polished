@@ -284,22 +284,22 @@ Current WSL shell launcher:
 
 `E10fV1`:
 
-- `E:\DataPons_processed\E10fV1\reskoopnet_dictionary\e10fV1_low50_high250_g2_abs_single.mat`
-- `E:\DataPons_processed\E10fV1\reskoopnet_dictionary\e10fV1_low50_high250_g2_abs_single_obs_info.csv`
-- `E:\DataPons_processed\E10fV1\reskoopnet_dictionary\e10fV1_low50_high250_g2_complex_split_single.mat`
-- `E:\DataPons_processed\E10fV1\reskoopnet_dictionary\e10fV1_low50_high250_g2_complex_split_single_obs_info.csv`
+- `E:\DataPons_processed\e10fV1\pipeline1_reskoopnet_dictionary\e10fV1_low50_high250_g2_abs_single.mat`
+- `E:\DataPons_processed\e10fV1\pipeline1_reskoopnet_dictionary\e10fV1_low50_high250_g2_abs_single_obs_info.csv`
+- `E:\DataPons_processed\e10fV1\pipeline1_reskoopnet_dictionary\e10fV1_low50_high250_g2_complex_split_single.mat`
+- `E:\DataPons_processed\e10fV1\pipeline1_reskoopnet_dictionary\e10fV1_low50_high250_g2_complex_split_single_obs_info.csv`
 
 `E10gH1`:
 
-- `E:\DataPons_processed\E10gH1\reskoopnet_dictionary\e10gh1_low50_high250_g2_abs_single.mat`
-- `E:\DataPons_processed\E10gH1\reskoopnet_dictionary\e10gh1_low50_high250_g2_abs_single_obs_info.csv`
-- `E:\DataPons_processed\E10gH1\reskoopnet_dictionary\e10gh1_low50_high250_g2_complex_split_single.mat`
-- `E:\DataPons_processed\E10gH1\reskoopnet_dictionary\e10gh1_low50_high250_g2_complex_split_single_obs_info.csv`
+- `E:\DataPons_processed\e10gh1\pipeline1_reskoopnet_dictionary\e10gh1_low50_high250_g2_abs_single.mat`
+- `E:\DataPons_processed\e10gh1\pipeline1_reskoopnet_dictionary\e10gh1_low50_high250_g2_abs_single_obs_info.csv`
+- `E:\DataPons_processed\e10gh1\pipeline1_reskoopnet_dictionary\e10gh1_low50_high250_g2_complex_split_single.mat`
+- `E:\DataPons_processed\e10gh1\pipeline1_reskoopnet_dictionary\e10gh1_low50_high250_g2_complex_split_single_obs_info.csv`
 
 Note:
 
-- the `E10gH1` filesystem names are currently lowercase as `e10gh1_*`
-- the launcher already matches the actual on-disk filenames
+- dataset folders use `cfg.file_stem` style, such as `e10fV1` and `e10gh1`
+- pipeline 1 dictionary files now live under `pipeline1_reskoopnet_dictionary`
 
 ## Recommended Usage
 

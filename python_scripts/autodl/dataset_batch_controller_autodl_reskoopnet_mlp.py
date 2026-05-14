@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -12,6 +13,14 @@ OBSERVABLE_BATCH_PATH = Path(__file__).with_name("batch_controller_autodl_reskoo
 
 def sanitize_tag(value):
     return str(value).replace("/", "-").replace(" ", "_")
+
+
+def resolve_ssh_binary():
+    if os.name == "nt":
+        candidate = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "OpenSSH" / "ssh.exe"
+        if candidate.exists():
+            return str(candidate)
+    return "ssh"
 
 
 def parse_args():
@@ -42,11 +51,16 @@ def parse_args():
         nargs="+",
         default=["abs", "complex_split"],
         choices=[
-            "abs", "complex", "complex_split", "eleHP", "HP", "identity",
-            "roi_mean", "slow_band_power", "svd", "HP_svd100", "global_svd100",
+            "abs",
+            "complex_split",
+            "eleHP", "HP",
+            "roi_mean", "roi_mean_slow_band_power",
+            "slow_band_power", "slow_band_power_svd",
+            "svd", "HP_svd100", "global_svd100", "gsvd100_ds",
+            "global_slow_band_power_svd100",
         ],
     )
-    parser.add_argument("--residual-forms", nargs="+", default=["projected_kv", "projected_vlambda"])
+    parser.add_argument("--residual-forms", nargs="+", default=["projected_vlambda"])
     parser.add_argument(
         "--loss-mode",
         default="squared",
@@ -65,24 +79,28 @@ def parse_args():
     parser.add_argument("--local-obs-info-file-abs", default=None)
     parser.add_argument("--local-data-file-complex-split", default=None)
     parser.add_argument("--local-obs-info-file-complex-split", default=None)
-    parser.add_argument("--local-data-file-complex", default=None)
-    parser.add_argument("--local-obs-info-file-complex", default=None)
     parser.add_argument("--local-data-file-eleHP", default=None)
     parser.add_argument("--local-obs-info-file-eleHP", default=None)
     parser.add_argument("--local-data-file-HP", default=None)
     parser.add_argument("--local-obs-info-file-HP", default=None)
-    parser.add_argument("--local-data-file-identity", default=None)
-    parser.add_argument("--local-obs-info-file-identity", default=None)
     parser.add_argument("--local-data-file-roi-mean", default=None)
     parser.add_argument("--local-obs-info-file-roi-mean", default=None)
+    parser.add_argument("--local-data-file-roi-mean-slow-band-power", default=None)
+    parser.add_argument("--local-obs-info-file-roi-mean-slow-band-power", default=None)
     parser.add_argument("--local-data-file-slow-band-power", default=None)
     parser.add_argument("--local-obs-info-file-slow-band-power", default=None)
+    parser.add_argument("--local-data-file-slow-band-power-svd", default=None)
+    parser.add_argument("--local-obs-info-file-slow-band-power-svd", default=None)
     parser.add_argument("--local-data-file-svd", default=None)
     parser.add_argument("--local-obs-info-file-svd", default=None)
     parser.add_argument("--local-data-file-HP-svd100", default=None)
     parser.add_argument("--local-obs-info-file-HP-svd100", default=None)
     parser.add_argument("--local-data-file-global-svd100", default=None)
     parser.add_argument("--local-obs-info-file-global-svd100", default=None)
+    parser.add_argument("--local-data-file-gsvd100-ds", default=None)
+    parser.add_argument("--local-obs-info-file-gsvd100-ds", default=None)
+    parser.add_argument("--local-data-file-global-slow-band-power-svd100", default=None)
+    parser.add_argument("--local-obs-info-file-global-slow-band-power-svd100", default=None)
     parser.add_argument(
         "--use-smoke-inputs",
         action="store_true",
@@ -105,7 +123,24 @@ def parse_args():
     parser.add_argument("--run-name-base", default="mlp_obs")
     parser.add_argument("--selected-device", default="gpu", choices=["cpu", "gpu"])
     parser.add_argument("--solver-name", default="resdmd_batch")
-    parser.add_argument("--file-type", default=".h5", choices=[".h5", ".mat"])
+    parser.add_argument("--seed", type=int, default=100)
+    parser.add_argument("--train-shuffle", dest="train_shuffle", action="store_true")
+    parser.add_argument("--no-train-shuffle", dest="train_shuffle", action="store_false")
+    parser.set_defaults(train_shuffle=False)
+    parser.add_argument(
+        "--spectral-sync-mode",
+        default="dual",
+        choices=["dual", "pre_only"],
+    )
+    parser.add_argument(
+        "--training-policy",
+        default="float64",
+        choices=["float32", "float64", "mixed_float16"],
+    )
+    parser.add_argument("--analysis-dtype", default="float64")
+    parser.add_argument("--gram-dtype", default="float64")
+    parser.add_argument("--spectral-dtype", default="float64")
+    parser.add_argument("--file-type", default=".mat", choices=[".h5", ".mat"])
     parser.add_argument("--field-name", default="obs")
     parser.add_argument("--layer-sizes", type=int, nargs="+", default=[100, 100, 100])
     parser.add_argument("--n-psi-train", type=int, default=100)
@@ -172,10 +207,6 @@ def observable_file_bundle(args, observable_mode):
             "data": args.local_data_file_complex_split,
             "obs_info": args.local_obs_info_file_complex_split,
         },
-        "complex": {
-            "data": args.local_data_file_complex or args.local_data_file_complex_split,
-            "obs_info": args.local_obs_info_file_complex or args.local_obs_info_file_complex_split,
-        },
         "eleHP": {
             "data": args.local_data_file_eleHP,
             "obs_info": args.local_obs_info_file_eleHP,
@@ -184,17 +215,21 @@ def observable_file_bundle(args, observable_mode):
             "data": args.local_data_file_HP,
             "obs_info": args.local_obs_info_file_HP,
         },
-        "identity": {
-            "data": args.local_data_file_identity,
-            "obs_info": args.local_obs_info_file_identity,
-        },
         "roi_mean": {
             "data": args.local_data_file_roi_mean,
             "obs_info": args.local_obs_info_file_roi_mean,
         },
+        "roi_mean_slow_band_power": {
+            "data": args.local_data_file_roi_mean_slow_band_power,
+            "obs_info": args.local_obs_info_file_roi_mean_slow_band_power,
+        },
         "slow_band_power": {
             "data": args.local_data_file_slow_band_power,
             "obs_info": args.local_obs_info_file_slow_band_power,
+        },
+        "slow_band_power_svd": {
+            "data": args.local_data_file_slow_band_power_svd,
+            "obs_info": args.local_obs_info_file_slow_band_power_svd,
         },
         "svd": {
             "data": args.local_data_file_svd,
@@ -207,6 +242,14 @@ def observable_file_bundle(args, observable_mode):
         "global_svd100": {
             "data": args.local_data_file_global_svd100,
             "obs_info": args.local_obs_info_file_global_svd100,
+        },
+        "gsvd100_ds": {
+            "data": args.local_data_file_gsvd100_ds,
+            "obs_info": args.local_obs_info_file_gsvd100_ds,
+        },
+        "global_slow_band_power_svd100": {
+            "data": args.local_data_file_global_slow_band_power_svd100,
+            "obs_info": args.local_obs_info_file_global_slow_band_power_svd100,
         },
     }
     bundle = dict(mapping[observable_mode])
@@ -233,8 +276,6 @@ def resolve_smoke_data_file(args, observable_mode):
         )
 
     patterns = [f"{args.dataset_stem}_*_{observable_mode}_single_{args.smoke_pattern_tag}.mat"]
-    if observable_mode == "complex":
-        patterns.append(f"{args.dataset_stem}_*_complex_split_single_{args.smoke_pattern_tag}.mat")
 
     matches = []
     for pattern in patterns:
@@ -291,6 +332,18 @@ def build_batch_cmd(args, observable_mode, bundle):
         args.selected_device,
         "--solver-name",
         args.solver_name,
+        "--seed",
+        str(args.seed),
+        "--spectral-sync-mode",
+        args.spectral_sync_mode,
+        "--training-policy",
+        args.training_policy,
+        "--analysis-dtype",
+        args.analysis_dtype,
+        "--gram-dtype",
+        args.gram_dtype,
+        "--spectral-dtype",
+        args.spectral_dtype,
         "--loss-mode",
         args.loss_mode,
         "--loss-epsilon",
@@ -356,6 +409,8 @@ def build_batch_cmd(args, observable_mode, bundle):
         cmd.append("--resume")
     if args.fresh_checkpoints:
         cmd.append("--fresh-checkpoints")
+    if args.train_shuffle:
+        cmd.append("--train-shuffle")
     if args.export_psi:
         cmd.append("--export-psi")
     if args.download_checkpoints:
@@ -384,7 +439,7 @@ def resolve_remote_input_paths(args, bundle):
 
 
 def build_ssh_probe_command(args, remote_path):
-    cmd = ["ssh", "-p", str(args.ssh_port)]
+    cmd = [resolve_ssh_binary(), "-p", str(args.ssh_port)]
     if args.ssh_key:
         cmd.extend(["-i", args.ssh_key])
     cmd.append(f"{args.ssh_user}@{args.ssh_host}")
@@ -427,7 +482,7 @@ def wait_for_remote_input(args, remote_path, observable_mode):
 
 
 def build_ssh_delete_command(args, remote_paths):
-    cmd = ["ssh", "-p", str(args.ssh_port)]
+    cmd = [resolve_ssh_binary(), "-p", str(args.ssh_port)]
     if args.ssh_key:
         cmd.extend(["-i", args.ssh_key])
     cmd.append(f"{args.ssh_user}@{args.ssh_host}")

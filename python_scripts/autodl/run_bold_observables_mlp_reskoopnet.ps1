@@ -8,8 +8,8 @@ param(
     [string]$RemotePython = "/root/miniconda3/envs/reskoopnet/bin/python",
     [string]$RemoteDataSubdirPrefix = "bold",
     [string]$LocalDownloadRootBase = "E:\autodl_results\bold",
-    [string[]]$ObservableModes = @("eleHP", "HP", "roi_mean", "slow_band_power", "svd", "HP_svd100", "global_svd100"),
-    [string[]]$ResidualForms = @("projected_kv", "projected_vlambda"),
+    [string[]]$ObservableModes = @("eleHP", "HP", "roi_mean", "roi_mean_slow_band_power", "slow_band_power", "slow_band_power_svd", "svd", "HP_svd100", "global_svd100", "gsvd100_ds", "global_slow_band_power_svd100"),
+    [string[]]$ResidualForms = @("projected_vlambda"),
     [ValidateSet("e10gb1", "e10gh1", "e10fV1", "f12m01")]
     [string]$StartWithDataset = "e10gb1",
     [switch]$OnlyStartDataset,
@@ -18,6 +18,7 @@ param(
     [switch]$SkipDataUpload,
     [int]$RemoteInputWaitHours = 72,
     [int]$RemoteInputPollSeconds = 60,
+    [string]$SolverName = "resdmd_batch",
     [int]$Epochs = 60,
     [int]$BatchSize = 2000,
     [int]$ChunkSize = 5000,
@@ -25,6 +26,11 @@ param(
     [double]$TrainRatio = 0.7,
     [double]$Reg = 0.1,
     [double]$LearningRate = 1e-4,
+    [int]$InnerEpochs = 5,
+    [int]$Seed = 100,
+    [switch]$TrainShuffle,
+    [ValidateSet("dual", "pre_only")]
+    [string]$SpectralSyncMode = "dual",
     [int[]]$LayerSizes = @(100, 100, 100),
     [switch]$ContinueOnError,
     [switch]$DownloadCheckpoints,
@@ -39,7 +45,7 @@ $repoRoot = "D:\Onedrive\ICPBR\Alberta\koopman_events\LFP_BOLD_kpm_polished"
 $autodlDir = Join-Path $repoRoot "python_scripts\autodl"
 $controller = Join-Path $autodlDir "dataset_batch_controller_autodl_reskoopnet_mlp.py"
 $pythonExe = "python"
-$boldRoot = "E:\DataPons_processed\bold_observables"
+$boldRoot = "E:\DataPons_processed"
 
 function Sync-RemoteCode {
     Write-Host "Syncing local MLP ResKoopNet code to ${SshUser}@${SshHost}:${RemoteCodeDir}"
@@ -56,6 +62,7 @@ function Sync-RemoteCode {
         "multi_dataset_batch_controller_autodl_reskoopnet_mlp.py",
         "edmd_utils.py",
         "solver_resdmd_batch3.py",
+        "solver_resdmd_batch4.py",
         "solver_resdmd_batch2.py"
     )
 
@@ -72,11 +79,12 @@ function Sync-RemoteCode {
 
 function Get-ObservableFile {
     param(
+        [string]$DatasetStem,
         [string]$DatasetId,
         [string]$Mode
     )
 
-    return Join-Path (Join-Path $boldRoot $DatasetId) ("{0}_bold_observables_{1}.mat" -f $DatasetId, $Mode)
+    return Join-Path (Join-Path (Join-Path $boldRoot $DatasetStem) "pipeline3_bold_observables") ("{0}_bold_observables_{1}.mat" -f $DatasetId, $Mode)
 }
 
 $datasets = @(
@@ -118,7 +126,7 @@ if ($OnlyStartDataset) {
 
 foreach ($dataset in $datasets) {
     foreach ($mode in $ObservableModes) {
-        $file = Get-ObservableFile -DatasetId $dataset.DatasetId -Mode $mode
+        $file = Get-ObservableFile -DatasetStem $dataset.DatasetStem -DatasetId $dataset.DatasetId -Mode $mode
         if (-not (Test-Path -LiteralPath $file)) {
             throw "Missing BOLD observable file for $($dataset.DatasetId) / ${mode}: $file"
         }
@@ -149,6 +157,9 @@ $commonArgs += $ResidualForms
 $commonArgs += @(
     "--file-type", ".mat",
     "--field-name", "obs",
+    "--solver-name", $SolverName,
+    "--seed", [string]$Seed,
+    "--spectral-sync-mode", $SpectralSyncMode,
     "--epochs", [string]$Epochs,
     "--batch-size", [string]$BatchSize,
     "--chunk-size", [string]$ChunkSize,
@@ -156,6 +167,7 @@ $commonArgs += @(
     "--train-ratio", [string]$TrainRatio,
     "--reg", [string]$Reg,
     "--lr", [string]$LearningRate,
+    "--inner-epochs", [string]$InnerEpochs,
     "--recover-completed-remote-runs",
     "--skip-completed-local-runs",
     "--delete-remote-run-after-download",
@@ -184,6 +196,9 @@ if ($Resume) {
 if ($ContinueOnError) {
     $commonArgs += "--continue-on-error"
 }
+if ($TrainShuffle) {
+    $commonArgs += "--train-shuffle"
+}
 if ($DownloadCheckpoints) {
     $commonArgs += "--download-checkpoints"
 }
@@ -201,13 +216,17 @@ foreach ($dataset in $datasets) {
         "--experiment-name", $datasetExperimentName,
         "--remote-data-subdir", $remoteDataSubdir,
         "--local-download-root", $localDownloadRoot,
-        "--local-data-file-eleHP", (Get-ObservableFile -DatasetId $dataset.DatasetId -Mode "eleHP"),
-        "--local-data-file-HP", (Get-ObservableFile -DatasetId $dataset.DatasetId -Mode "HP"),
-        "--local-data-file-roi-mean", (Get-ObservableFile -DatasetId $dataset.DatasetId -Mode "roi_mean"),
-        "--local-data-file-slow-band-power", (Get-ObservableFile -DatasetId $dataset.DatasetId -Mode "slow_band_power"),
-        "--local-data-file-svd", (Get-ObservableFile -DatasetId $dataset.DatasetId -Mode "svd"),
-        "--local-data-file-HP-svd100", (Get-ObservableFile -DatasetId $dataset.DatasetId -Mode "HP_svd100"),
-        "--local-data-file-global-svd100", (Get-ObservableFile -DatasetId $dataset.DatasetId -Mode "global_svd100")
+        "--local-data-file-eleHP", (Get-ObservableFile -DatasetStem $dataset.DatasetStem -DatasetId $dataset.DatasetId -Mode "eleHP"),
+        "--local-data-file-HP", (Get-ObservableFile -DatasetStem $dataset.DatasetStem -DatasetId $dataset.DatasetId -Mode "HP"),
+        "--local-data-file-roi-mean", (Get-ObservableFile -DatasetStem $dataset.DatasetStem -DatasetId $dataset.DatasetId -Mode "roi_mean"),
+        "--local-data-file-roi-mean-slow-band-power", (Get-ObservableFile -DatasetStem $dataset.DatasetStem -DatasetId $dataset.DatasetId -Mode "roi_mean_slow_band_power"),
+        "--local-data-file-slow-band-power", (Get-ObservableFile -DatasetStem $dataset.DatasetStem -DatasetId $dataset.DatasetId -Mode "slow_band_power"),
+        "--local-data-file-slow-band-power-svd", (Get-ObservableFile -DatasetStem $dataset.DatasetStem -DatasetId $dataset.DatasetId -Mode "slow_band_power_svd"),
+        "--local-data-file-svd", (Get-ObservableFile -DatasetStem $dataset.DatasetStem -DatasetId $dataset.DatasetId -Mode "svd"),
+        "--local-data-file-HP-svd100", (Get-ObservableFile -DatasetStem $dataset.DatasetStem -DatasetId $dataset.DatasetId -Mode "HP_svd100"),
+        "--local-data-file-global-svd100", (Get-ObservableFile -DatasetStem $dataset.DatasetStem -DatasetId $dataset.DatasetId -Mode "global_svd100"),
+        "--local-data-file-gsvd100-ds", (Get-ObservableFile -DatasetStem $dataset.DatasetStem -DatasetId $dataset.DatasetId -Mode "gsvd100_ds"),
+        "--local-data-file-global-slow-band-power-svd100", (Get-ObservableFile -DatasetStem $dataset.DatasetStem -DatasetId $dataset.DatasetId -Mode "global_slow_band_power_svd100")
     )
 
     Write-Host ""
@@ -216,6 +235,9 @@ foreach ($dataset in $datasets) {
     Write-Host ("Experiment: {0}" -f $datasetExperimentName)
     Write-Host ("Observable modes: {0}" -f ($ObservableModes -join ", "))
     Write-Host ("Residual forms: {0}" -f ($ResidualForms -join ", "))
+    Write-Host ("Solver: {0}" -f $SolverName)
+    Write-Host ("Seed: {0}" -f $Seed)
+    Write-Host ("Training schedule: shuffle={0}, spectral_sync_mode={1}, inner_epochs={2}" -f ([bool]$TrainShuffle), $SpectralSyncMode, $InnerEpochs)
     Write-Host ("Local download root: {0}" -f $localDownloadRoot)
     Write-Host ("Remote data subdir: {0}" -f $remoteDataSubdir)
     Write-Host ("=" * 80)

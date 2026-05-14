@@ -4,7 +4,7 @@ function [fig, sim_info] = compare_deconv_condition_similarity(deconv_results, c
 %   [fig, sim_info] = compare_deconv_condition_similarity(deconv_results, cfg)
 %
 % Inputs
-%   deconv_results  nested struct produced by script_visualize_edmd_outputs_windowed.m
+%   deconv_results  nested struct produced by the windowed deconvolution export stage
 %   cfg             optional struct
 %     .method_order         cellstr order for method dimension
 %     .lambda_source_order  cellstr order for lambda-source dimension

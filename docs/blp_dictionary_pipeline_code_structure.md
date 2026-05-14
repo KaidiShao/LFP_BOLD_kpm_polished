@@ -309,7 +309,7 @@ inspect these values interactively.
 
 Saved under:
 
-- `<output_root>\<file_stem>\spectrograms\`
+- `<output_root>\<file_stem>\pipeline1_spectrograms\`
 
 Canonical files:
 
@@ -320,7 +320,7 @@ Canonical files:
 
 Saved under:
 
-- `<output_root>\<file_stem>\reskoopnet_dictionary\`
+- `<output_root>\<file_stem>\pipeline1_reskoopnet_dictionary\`
 
 Typical files:
 

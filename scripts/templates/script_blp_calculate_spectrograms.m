@@ -6,6 +6,6 @@ cfg.spectrogram.pad_sec = 20;
 cfg.spectrogram.pad_mode = 'mirror';
 
 D = io_raw.load_blp_dataset(cfg);
-output_root =  'D:\DataPons_processed\';
+output_root = io_project.get_project_processed_root();
 spec_opts = struct();
 S = compute_blp_region_spectrograms_streamed(D, cfg, output_root, spec_opts);

@@ -4,7 +4,9 @@ function fit = fit_empirical_eigenvalues_from_efuns(efuns_raw, lambda_ref, cfg)
 %   fit = fit_empirical_eigenvalues_from_efuns(efuns_raw, lambda_ref, cfg)
 %
 % Inputs
-%   efuns_raw   [T x K] complex eigenfunctions (time x mode)
+%   efuns_raw   [T x K] complex eigenfunctions (time x mode), or a struct:
+%                .source_efuns [T x Ksource]
+%                .col_indices  [K x 1]
 %   lambda_ref  [K x 1] reference eigenvalues used to preserve phase if desired
 %   cfg         optional struct
 %     .dt                    sampling interval (default 1)
@@ -57,9 +59,8 @@ cfg = local_set_default(cfg, 'fit_fallback', 'efold');
 cfg = local_set_default(cfg, 'lambda_phase_mode', 'preserve_edmd_angle');
 cfg = local_set_default(cfg, 'complex_fit_mode', 'ls_one_step');
 
-[T, K0] = size(efuns_raw);
+[T, K0] = local_efun_size(efuns_raw);
 K = min(K0, numel(lambda_ref));
-efuns_raw = efuns_raw(:, 1:K);
 lambda_ref = lambda_ref(1:K);
 
 if isempty(cfg.maxLag)
@@ -68,8 +69,8 @@ else
     maxLag = min(cfg.maxLag, T - 1);
 end
 
-Phi = local_normalize_efuns(efuns_raw, cfg.feat);
-[acf_lags, acf_mat, tau_emp, fit_info] = local_acf_timescale_from_envelope(Phi, maxLag, cfg.dt, cfg);
+[acf_lags, acf_mat, tau_emp, fit_info] = ...
+    local_acf_timescale_from_envelope_raw(efuns_raw, K, maxLag, cfg.dt, cfg);
 
 kappa_emp = 1 ./ tau_emp;
 kappa_emp(~isfinite(kappa_emp) | kappa_emp < 0) = 0;
@@ -94,7 +95,7 @@ lambda_emp_discrete_safe(invalid) = lambda_ref_discrete(invalid);
 lambda_emp_input = local_from_discrete_lambda(lambda_emp_discrete, cfg);
 lambda_emp_input_safe = local_from_discrete_lambda(lambda_emp_discrete_safe, cfg);
 [lambda_emp_complex_discrete, lambda_emp_complex_valid] = ...
-    local_fit_complex_lambda(efuns_raw, cfg);
+    local_fit_complex_lambda(efuns_raw, K, cfg);
 lambda_emp_complex_input = local_from_discrete_lambda(lambda_emp_complex_discrete, cfg);
 lambda_emp_complex_discrete_safe = lambda_emp_complex_discrete;
 lambda_emp_complex_discrete_safe(~lambda_emp_complex_valid) = 0;
@@ -133,26 +134,67 @@ if ~isfield(cfg, name) || isempty(cfg.(name))
 end
 end
 
-function Phi = local_normalize_efuns(efuns_raw, feat)
+function [T, K] = local_efun_size(efuns_raw)
+if isstruct(efuns_raw)
+    source_efuns = local_efun_source(efuns_raw);
+    col_indices = local_efun_col_indices(efuns_raw, size(source_efuns, 2));
+    T = size(source_efuns, 1);
+    K = numel(col_indices);
+else
+    [T, K] = size(efuns_raw);
+end
+end
+
+function source_efuns = local_efun_source(efuns_raw)
+if isfield(efuns_raw, 'source_efuns') && ~isempty(efuns_raw.source_efuns)
+    source_efuns = efuns_raw.source_efuns;
+elseif isfield(efuns_raw, 'source') && ~isempty(efuns_raw.source)
+    source_efuns = efuns_raw.source;
+elseif isfield(efuns_raw, 'efuns') && ~isempty(efuns_raw.efuns)
+    source_efuns = efuns_raw.efuns;
+else
+    error('efuns_raw struct must contain source_efuns, source, or efuns.');
+end
+end
+
+function col_indices = local_efun_col_indices(efuns_raw, n_source_cols)
+if isfield(efuns_raw, 'col_indices') && ~isempty(efuns_raw.col_indices)
+    col_indices = efuns_raw.col_indices(:);
+elseif isfield(efuns_raw, 'efun_col_indices') && ~isempty(efuns_raw.efun_col_indices)
+    col_indices = efuns_raw.efun_col_indices(:);
+elseif isfield(efuns_raw, 'cols') && ~isempty(efuns_raw.cols)
+    col_indices = efuns_raw.cols(:);
+else
+    col_indices = (1:n_source_cols).';
+end
+col_indices = col_indices(col_indices >= 1 & col_indices <= n_source_cols);
+end
+
+function phi = local_get_efun_col(efuns_raw, j)
+if isstruct(efuns_raw)
+    source_efuns = local_efun_source(efuns_raw);
+    col_indices = local_efun_col_indices(efuns_raw, size(source_efuns, 2));
+    phi = source_efuns(:, col_indices(j));
+else
+    phi = efuns_raw(:, j);
+end
+end
+
+function x = local_normalize_efun_column(phi, feat)
 if exist('normalize_efun', 'file') == 2
-    Phi = normalize_efun(efuns_raw, feat);
+    x = normalize_efun(phi, feat);
     return;
 end
 
 if strcmpi(feat, 'real')
-    X = real(efuns_raw);
+    x = real(phi);
 else
-    X = abs(efuns_raw);
+    x = abs(phi);
 end
 
-Phi = X;
-for j = 1:size(X, 2)
-    x = X(:, j);
-    mx = max(abs(x));
-    if mx > 0
-        x = x / mx;
-    end
-    Phi(:, j) = x;
+mx = max(abs(x));
+if mx > 0
+    x = x / mx;
 end
 end
 
@@ -172,16 +214,15 @@ else
 end
 end
 
-function [lambda_hat, is_valid] = local_fit_complex_lambda(efuns_raw, cfg)
+function [lambda_hat, is_valid] = local_fit_complex_lambda(efuns_raw, K, cfg)
 % Fit complex lambda from raw eigenfunctions via one-step regression.
-    [~, K] = size(efuns_raw);
     lambda_hat = nan(K, 1);
     is_valid = false(K, 1);
 
     switch lower(cfg.complex_fit_mode)
         case 'ls_one_step'
             for j = 1:K
-                phi = efuns_raw(:, j);
+                phi = local_get_efun_col(efuns_raw, j);
                 if numel(phi) < 2
                     continue;
                 end
@@ -213,9 +254,8 @@ function [tau, kappa] = local_lambda_timescale(lambda_d, dt)
     kappa(~isfinite(kappa) | kappa < 0) = 0;
 end
 
-function [lags, acf_mat, tau_emp, fit_info] = local_acf_timescale_from_envelope(Phi, maxLag, dt, cfg)
-T = size(Phi, 1);
-K = size(Phi, 2);
+function [lags, acf_mat, tau_emp, fit_info] = local_acf_timescale_from_envelope_raw(efuns_raw, K, maxLag, dt, cfg)
+[T, ~] = local_efun_size(efuns_raw);
 
 maxLag = min(maxLag, T - 1);
 lags = (0:maxLag).';
@@ -226,7 +266,7 @@ fit_info = repmat(struct('method','', 'idxStart',nan, 'idxEnd',nan, ...
     'slope',nan, 'r2',nan, 'censored',false), K, 1);
 
 for i = 1:K
-    x = Phi(:, i);
+    x = local_normalize_efun_column(local_get_efun_col(efuns_raw, i), cfg.feat);
     [~, acf_i] = local_acf(x, maxLag);
     acf_i = acf_i(:);
     acf_mat(:, i) = acf_i;

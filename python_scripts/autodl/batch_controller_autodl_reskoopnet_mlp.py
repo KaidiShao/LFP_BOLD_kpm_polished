@@ -9,16 +9,18 @@ from pathlib import Path
 CONTROLLER_PATH = Path(__file__).with_name("controller_autodl_reskoopnet_mlp.py")
 OBSERVABLE_TAGS = {
     "abs": "abs",
-    "complex": "complex_split",
     "complex_split": "complex_split",
     "eleHP": "eleHP",
     "HP": "HP",
-    "identity": "identity",
     "roi_mean": "roi_mean",
+    "roi_mean_slow_band_power": "roi_mean_slow_band_power",
     "slow_band_power": "slow_band_power",
+    "slow_band_power_svd": "slow_band_power_svd",
     "svd": "svd",
     "HP_svd100": "HP_svd100",
     "global_svd100": "global_svd100",
+    "gsvd100_ds": "gsvd100_ds",
+    "global_slow_band_power_svd100": "global_slow_band_power_svd100",
 }
 
 
@@ -85,10 +87,27 @@ def parse_args():
     parser.add_argument("--dataset-stem", default=None)
     parser.add_argument("--selected-device", default="gpu", choices=["cpu", "gpu"])
     parser.add_argument("--solver-name", default="resdmd_batch")
+    parser.add_argument("--seed", type=int, default=100)
+    parser.add_argument("--train-shuffle", dest="train_shuffle", action="store_true")
+    parser.add_argument("--no-train-shuffle", dest="train_shuffle", action="store_false")
+    parser.set_defaults(train_shuffle=False)
+    parser.add_argument(
+        "--spectral-sync-mode",
+        default="dual",
+        choices=["dual", "pre_only"],
+    )
+    parser.add_argument(
+        "--training-policy",
+        default="float64",
+        choices=["float32", "float64", "mixed_float16"],
+    )
+    parser.add_argument("--analysis-dtype", default="float64")
+    parser.add_argument("--gram-dtype", default="float64")
+    parser.add_argument("--spectral-dtype", default="float64")
     parser.add_argument(
         "--residual-forms",
         nargs="+",
-        default=["projected_kv", "projected_vlambda"],
+        default=["projected_vlambda"],
         choices=["projected_kv", "projected_vlambda"],
     )
     parser.add_argument(
@@ -107,11 +126,16 @@ def parse_args():
         "--observable-mode",
         default="abs",
         choices=[
-            "abs", "complex", "complex_split", "eleHP", "HP", "identity",
-            "roi_mean", "slow_band_power", "svd", "HP_svd100", "global_svd100",
+            "abs",
+            "complex_split",
+            "eleHP", "HP",
+            "roi_mean", "roi_mean_slow_band_power",
+            "slow_band_power", "slow_band_power_svd",
+            "svd", "HP_svd100", "global_svd100", "gsvd100_ds",
+            "global_slow_band_power_svd100",
         ],
     )
-    parser.add_argument("--file-type", default=".h5", choices=[".h5", ".mat"])
+    parser.add_argument("--file-type", default=".mat", choices=[".h5", ".mat"])
     parser.add_argument("--field-name", default="obs")
     parser.add_argument("--layer-sizes", type=int, nargs="+", default=[100, 100, 100])
     parser.add_argument("--n-psi-train", type=int, default=100)
@@ -190,6 +214,14 @@ def build_base_controller_cmd(args):
         args.selected_device,
         "--solver-name",
         args.solver_name,
+        "--training-policy",
+        args.training_policy,
+        "--analysis-dtype",
+        args.analysis_dtype,
+        "--gram-dtype",
+        args.gram_dtype,
+        "--spectral-dtype",
+        args.spectral_dtype,
         "--loss-mode",
         args.loss_mode,
         "--loss-epsilon",
@@ -222,6 +254,10 @@ def build_base_controller_cmd(args):
         str(args.inner_epochs),
         "--end-condition",
         str(args.end_condition),
+        "--seed",
+        str(args.seed),
+        "--spectral-sync-mode",
+        args.spectral_sync_mode,
         "--chunk-size",
         str(args.chunk_size),
         "--poll-interval",
@@ -253,6 +289,8 @@ def build_base_controller_cmd(args):
         cmd.append("--resume")
     if args.fresh_checkpoints:
         cmd.append("--fresh-checkpoints")
+    if args.train_shuffle:
+        cmd.append("--train-shuffle")
     if args.export_psi:
         cmd.append("--export-psi")
     if args.download_checkpoints:

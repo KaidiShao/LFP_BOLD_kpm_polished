@@ -90,7 +90,7 @@ for c = 1:n_channels
     channel_region_idx(c) = ridx;
 end
 
-save_dir = fullfile(output_root, cfg.file_stem, 'event_detection');
+save_dir = io_project.get_pipeline_stage_dir(output_root, cfg, 2, 'event_detection');
 if exist(save_dir, 'dir') ~= 7
     mkdir(save_dir);
 end

@@ -23,7 +23,7 @@ cfg.sessions(1).session_id = 1:5;          % polar
 cfg.sessions(2).session_id = [6:14, 21:25]; % spont
 ```
 
-The `21:25` block is the main problem for spike correlation because it has `Spkt.dx = 0.005 s`, while the earlier included sessions have `Spkt.dx = 0.025 s`.
+The `21:25` block is the main problem for SPKT cross-correlation because it has `Spkt.dx = 0.005 s`, while the earlier included sessions have `Spkt.dx = 0.025 s`.
 
 ## Reference Config Evidence
 
@@ -62,19 +62,19 @@ The audit included `15:16` because an earlier inspected config state included th
 
 The processed dictionary used by the current MLP outputs is:
 
-`E:\DataPons_processed\e10gh1\reskoopnet_dictionary\e10gh1_low50_high250_g2_abs_single.mat`
+`E:\DataPons_processed\e10gh1\pipeline1_reskoopnet_dictionary\e10gh1_low50_high250_g2_abs_single.mat`
 
 Its `session_dx` values are all BLP-like, about `0.001515 s`. This means the EDMD/MLP time axis itself is based on the BLP sampling grid. The problematic mixed `0.025 s` versus `0.005 s` time base appears when aligning the full-time deconvolved residual to spike bins.
 
 ## Affected Outputs
 
-Treat current `e10gh1` full-time spike-residual correlation outputs as not final:
+Treat current `e10gh1` full-time SPKT-residual cross-correlation outputs as not final:
 
-`E:\DataPons_processed\e10gh1\postprocessing\mlp_fulltime_spike_residual_correlation`
+`E:\DataPons_processed\e10gh1\pipeline6_spkt_residual_cross_correlation`
 
 Also treat current `e10gh1` MLP/postprocessing outputs as tied to the old session selection until the config is corrected and the upstream inputs are regenerated:
 
-`E:\DataPons_processed\e10gh1\postprocessing\mlp_top_state_diversity_postprocessing`
+`E:\DataPons_processed\e10gh1\pipeline6_top_state_diversity_postprocessing`
 
 `E:\autodl_results\e10gh1\mlp\outputs`
 
@@ -94,7 +94,7 @@ cfg.sessions(2).session_id = 6:14;  % spont
 Alternative, only if `21:25` must be analyzed:
 
 - Keep `21:25` as a separate group.
-- Do not pool its spike correlation together with `1:14`.
+- Do not pool its SPKT cross-correlation together with `1:14`.
 - Report it separately because it has different `Spkt.dx` and was flagged as poor neuro-data in the reference config.
 
 ## Rerun Plan After Manual Config Fix
@@ -107,6 +107,6 @@ At minimum, regenerate:
 2. `e10gh1` MLP EDMD outputs under `E:\autodl_results\e10gh1\mlp\outputs`.
 3. `e10gh1` consensus state diversity windows if their inputs depend on the corrected session set.
 4. `e10gh1` top-window postprocessing plots.
-5. `e10gh1` full-time spike-residual correlation.
+5. `e10gh1` full-time SPKT-residual cross-correlation.
 
 The other datasets and `F12m01` are not part of this issue.

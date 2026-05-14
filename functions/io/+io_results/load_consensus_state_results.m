@@ -28,7 +28,7 @@ if ischar(consensus_input) || isstring(consensus_input)
     return;
 end
 
-search_dir = fullfile(output_root, cfg.file_stem, 'consensus_states');
+search_dir = io_project.get_pipeline_stage_dir(output_root, cfg, 2, 'consensus_states');
 pattern = fullfile(search_dir, [cfg.file_stem, '_consensus_states_*.mat']);
 L = dir(pattern);
 

@@ -74,11 +74,11 @@ end
 
 if ~isfield(prep_cfg, 'consensus_colors') || isempty(prep_cfg.consensus_colors)
     prep_cfg.consensus_colors = [ ...
-        0.86, 0.74, 0.42; ... % theta
-        0.45, 0.64, 0.90; ... % gamma
-        0.86, 0.55, 0.75; ... % ripple
-        0.63, 0.53, 0.88; ... % theta-gamma
-        0.78, 0.45, 0.60];    % sharp-wave-ripple
+        0.98, 0.72, 0.18; ... % theta
+        0.20, 0.75, 1.00; ... % gamma
+        0.78, 0.36, 1.00; ... % ripple
+        0.16, 0.86, 0.56; ... % theta-gamma
+        1.00, 0.22, 0.22];    % sharp-wave-ripple
 end
 
 if ~isfield(prep_cfg, 'consensus_face_alpha') || isempty(prep_cfg.consensus_face_alpha)

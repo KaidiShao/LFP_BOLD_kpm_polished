@@ -136,6 +136,14 @@ if ~isfield(plot_cfg, 'line_width') || isempty(plot_cfg.line_width)
     plot_cfg.line_width = 1.15;
 end
 
+if ~isfield(plot_cfg, 'scatter_marker_size') || isempty(plot_cfg.scatter_marker_size)
+    plot_cfg.scatter_marker_size = 10;
+end
+
+if ~isfield(plot_cfg, 'scatter_alpha') || isempty(plot_cfg.scatter_alpha)
+    plot_cfg.scatter_alpha = 0.84;
+end
+
 if ~isfield(plot_cfg, 'downsample_step') || isempty(plot_cfg.downsample_step)
     plot_cfg.downsample_step = 10;
 end
@@ -266,14 +274,9 @@ end
 
 
 function local_plot_colored_trajectory(ax, x, y, z, c, plot_cfg)
-surface(ax, ...
-    [x.'; x.'], ...
-    [y.'; y.'], ...
-    [z.'; z.'], ...
-    [c.'; c.'], ...
-    'FaceColor', 'none', ...
-    'EdgeColor', 'interp', ...
-    'LineWidth', plot_cfg.line_width);
+scatter3(ax, x, y, z, plot_cfg.scatter_marker_size, c, 'filled', ...
+    'MarkerEdgeColor', 'none', ...
+    'MarkerFaceAlpha', plot_cfg.scatter_alpha);
 end
 
 

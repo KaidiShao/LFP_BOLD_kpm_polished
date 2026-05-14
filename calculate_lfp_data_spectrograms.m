@@ -17,7 +17,7 @@ addpath(genpath(proj_path_main));
 
 % data paths
 data_input_path = 'D:\DataPons\';
-data_output_path = 'D:\DataPons_processed\';
+data_output_path = io_project.get_project_processed_root();
 
 % utility function's path
 addpath(genpath(strcat(onedrive_path,'\util_functions\')));

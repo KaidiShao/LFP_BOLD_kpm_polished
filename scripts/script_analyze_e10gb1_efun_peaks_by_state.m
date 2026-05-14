@@ -1,17 +1,21 @@
 % Analyze reduced temporal-component peaks inside e10gb1 consensus-state windows.
-%
-% This script expects that script_run_eigenfunction_reduction_minimal.m has
-% already saved a compact eigenfunction-reduction result.
 
 this_script_dir = fileparts(mfilename('fullpath'));
 repo_root = fileparts(this_script_dir);
 addpath(genpath(repo_root));
 set(groot, 'defaultFigureVisible', 'off');
 
-cfg = cfg_eigenfunction_reduction_minimal();
+if ~exist('cfg_name', 'var') || isempty(cfg_name)
+    cfg_name = 'E10gb1';
+end
+cfg_fun = ['cfg_' char(string(cfg_name))];
+if exist(cfg_fun, 'file') ~= 2
+    error('Config function not found on path: %s', cfg_fun);
+end
+cfg = feval(cfg_fun);
 output_root = cfg.dataset.processed_root;
 
-result_file = local_find_latest_result_file(cfg.save.dir);
+result_file = find_latest_blp_eigenfunction_reduction_result(output_root, cfg);
 fprintf('Loading eigenfunction reduction result:\n  %s\n', result_file);
 S = load(result_file, 'result');
 if ~isfield(S, 'result')
@@ -35,7 +39,8 @@ params.baseline_label = 'baseline';
 params.min_window_samples = 1;
 params.baseline_random_seed = 1;
 params.alpha = 0.05;
-params.save_dir = fullfile(cfg.output.root, 'peaks');
+params.save_dir = io_project.get_pipeline_stage_dir( ...
+    output_root, cfg.dataset.name, 5, 'eigenfunction_peaks_by_state');
 params.save_tag = sprintf('%s_peaks', cfg.dataset.name);
 params.save_results = true;
 params.write_csv = true;
@@ -66,20 +71,3 @@ if isfield(A.save_paths, 'baseline_effect_heatmap_png')
 end
 
 disp(A.stats_table);
-
-
-function result_file = local_find_latest_result_file(result_dir)
-if exist(result_dir, 'dir') ~= 7
-    error(['Result directory does not exist:\n  %s\n', ...
-        'Run script_run_eigenfunction_reduction_minimal.m first.'], result_dir);
-end
-
-L = dir(fullfile(result_dir, '*.mat'));
-if isempty(L)
-    error(['No eigenfunction reduction MAT files were found in:\n  %s\n', ...
-        'Run script_run_eigenfunction_reduction_minimal.m first.'], result_dir);
-end
-
-[~, idx] = max([L.datenum]);
-result_file = fullfile(L(idx).folder, L(idx).name);
-end

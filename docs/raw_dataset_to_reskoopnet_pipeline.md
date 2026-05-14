@@ -198,7 +198,7 @@ Main saved outputs per mode:
 Typical output folder:
 
 ```text
-<output_root>\<file_stem>\reskoopnet_dictionary\
+<output_root>\<file_stem>\pipeline1_reskoopnet_dictionary\
 ```
 
 Typical filenames:

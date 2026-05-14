@@ -55,8 +55,8 @@ fig = figure( ...
 ax = axes(fig);
 hold(ax, 'on');
 
-local_print(plot_cfg, '[consensus-state-space] Drawing trajectory surface...\n');
-trajectory_surface = local_plot_consensus_surface(ax, x, y, z, ...
+local_print(plot_cfg, '[consensus-state-space] Drawing trajectory points...\n');
+trajectory_points = local_plot_consensus_points(ax, x, y, z, ...
     state_code_plot, plot_cfg);
 
 if plot_cfg.show_state_number_labels
@@ -96,8 +96,8 @@ plot_info.code_ticks = code_ticks(:);
 plot_info.code_tick_labels = code_labels(:);
 plot_info.component_source = source_name;
 plot_info.source_consensus_file = source_consensus_file;
-plot_info.graphics_mode = 'single_surface';
-plot_info.trajectory_surface = trajectory_surface;
+plot_info.graphics_mode = 'scatter3';
+plot_info.trajectory_points = trajectory_points;
 plot_info.save_path = '';
 
 if plot_cfg.save_figure
@@ -228,6 +228,14 @@ end
 
 if ~isfield(plot_cfg, 'event_line_width') || isempty(plot_cfg.event_line_width)
     plot_cfg.event_line_width = 2.0;
+end
+
+if ~isfield(plot_cfg, 'scatter_marker_size') || isempty(plot_cfg.scatter_marker_size)
+    plot_cfg.scatter_marker_size = 12;
+end
+
+if ~isfield(plot_cfg, 'scatter_alpha') || isempty(plot_cfg.scatter_alpha)
+    plot_cfg.scatter_alpha = 0.88;
 end
 
 if ~isfield(plot_cfg, 'single_sample_marker_size') || isempty(plot_cfg.single_sample_marker_size)
@@ -392,7 +400,7 @@ end
 end
 
 
-function h = local_plot_consensus_surface(ax, x, y, z, state_code_plot, plot_cfg)
+function h = local_plot_consensus_points(ax, x, y, z, state_code_plot, plot_cfg)
 if numel(x) < 2
     h = scatter3(ax, x, y, z, plot_cfg.single_sample_marker_size, ...
         state_code_plot(:), 'filled', ...
@@ -400,15 +408,10 @@ if numel(x) < 2
     return;
 end
 
-h = surface(ax, ...
-    [x(:).'; x(:).'], ...
-    [y(:).'; y(:).'], ...
-    [z(:).'; z(:).'], ...
-    [state_code_plot(:).'; state_code_plot(:).'], ...
-    'FaceColor', 'none', ...
-    'EdgeColor', 'flat', ...
-    'CDataMapping', 'scaled', ...
-    'LineWidth', plot_cfg.patch_line_width);
+h = scatter3(ax, x, y, z, plot_cfg.scatter_marker_size, ...
+    state_code_plot(:), 'filled', ...
+    'MarkerEdgeColor', 'none', ...
+    'MarkerFaceAlpha', plot_cfg.scatter_alpha);
 end
 
 
@@ -452,11 +455,11 @@ if ~isempty(plot_cfg.state_colormap)
 else
     cmap = [ ...
         0.34, 0.36, 0.38;  % 0 baseline
-        0.86, 0.74, 0.42;  % 1 theta
-        0.45, 0.64, 0.90;  % 2 gamma
-        0.86, 0.55, 0.75;  % 3 ripple
-        0.63, 0.53, 0.88;  % 4 theta-gamma
-        0.78, 0.45, 0.60]; % 5 sharp-wave-ripple
+        0.98, 0.72, 0.18;  % 1 theta
+        0.20, 0.75, 1.00;  % 2 gamma
+        0.78, 0.36, 1.00;  % 3 ripple
+        0.16, 0.86, 0.56;  % 4 theta-gamma
+        1.00, 0.22, 0.22]; % 5 sharp-wave-ripple
 end
 
 needed_rows = max(1, max_code + 1);

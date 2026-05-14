@@ -1,12 +1,15 @@
 import argparse
 import gc
 import os
+import random
 import sys
 from pathlib import Path
 
 import h5py
 import numpy as np
 import scipy.io
+
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
 import tensorflow as tf
 from koopmanlib.dictionary import PsiNN
 
@@ -43,9 +46,18 @@ def parse_args():
     parser.add_argument("--solver-name", default="resdmd_batch")
     parser.add_argument(
         "--residual-form",
-        default="projected_kv",
+        default="projected_vlambda",
         choices=["projected_kv", "projected_vlambda"],
     )
+    parser.add_argument(
+        "--training-policy",
+        default="float64",
+        choices=["float32", "float64", "mixed_float16"],
+        help="Numeric policy passed into the ResKoopNet solver.",
+    )
+    parser.add_argument("--analysis-dtype", default="float64")
+    parser.add_argument("--gram-dtype", default="float64")
+    parser.add_argument("--spectral-dtype", default="float64")
     parser.add_argument(
         "--loss-mode",
         default="squared",
@@ -68,12 +80,17 @@ def parse_args():
         "--observable-mode",
         default="abs",
         choices=[
-            "abs", "complex", "complex_split", "eleHP", "HP", "identity",
-            "roi_mean", "slow_band_power", "svd", "HP_svd100", "global_svd100",
+            "abs",
+            "complex_split",
+            "eleHP", "HP",
+            "roi_mean", "roi_mean_slow_band_power",
+            "slow_band_power", "slow_band_power_svd",
+            "svd", "HP_svd100", "global_svd100", "gsvd100_ds",
+            "global_slow_band_power_svd100",
         ],
     )
     parser.add_argument("--data-filename", default=None)
-    parser.add_argument("--file-type", default=".h5", choices=[".h5", ".mat"])
+    parser.add_argument("--file-type", default=".mat", choices=[".h5", ".mat"])
     parser.add_argument("--field-name", default="obs")
     parser.add_argument("--layer-sizes", type=int, nargs="+", default=[100, 100, 100])
     parser.add_argument("--n-psi-train", type=int, default=100)
@@ -88,6 +105,63 @@ def parse_args():
     parser.add_argument("--inner-epochs", type=int, default=5)
     parser.add_argument("--end-condition", type=float, default=1e-9)
     parser.add_argument("--chunk-size", type=int, default=5000)
+    parser.add_argument(
+        "--train-shuffle",
+        dest="train_shuffle",
+        action="store_true",
+        help="Shuffle training snapshot pairs before each inner training phase.",
+    )
+    parser.add_argument(
+        "--no-train-shuffle",
+        dest="train_shuffle",
+        action="store_false",
+        help=argparse.SUPPRESS,
+    )
+    parser.set_defaults(train_shuffle=False)
+    parser.add_argument(
+        "--spectral-sync-mode",
+        default="dual",
+        choices=["dual", "pre_only"],
+        help=(
+            "Whether to sync V/Lambda into the training graph both before and after "
+            "inner training (dual), or to use the torch-like outer schedule "
+            "that updates spectral quantities only before each inner-training "
+            "phase (pre_only)."
+        ),
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=100,
+        help=(
+            "Global experiment seed used for numpy / python / TensorFlow RNGs, "
+            "snapshot-pair splitting, and dataset shuffle seeding."
+        ),
+    )
+    parser.add_argument(
+        "--export-mode",
+        default="full",
+        choices=["full", "summary_only"],
+        help=(
+            "Export full efuns chunk files or only the compact summary. "
+            "Use summary_only on space-constrained remote disks."
+        ),
+    )
+    parser.add_argument(
+        "--diagnostic-dpi",
+        type=int,
+        default=120,
+        help="PNG dpi for training diagnostic figures.",
+    )
+    parser.add_argument(
+        "--export-precision",
+        default="double",
+        choices=["single", "double"],
+        help=(
+            "Numeric precision used only for saved MAT outputs. "
+            "Training precision is controlled separately by --training-policy."
+        ),
+    )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
         "--resume-mode",
@@ -97,6 +171,7 @@ def parse_args():
     )
     parser.add_argument("--fresh-checkpoints", action="store_true")
     parser.set_defaults(export_psi=False)
+    parser.set_defaults(save_diagnostic_pdf=True)
     parser.add_argument(
         "--export-psi",
         dest="export_psi",
@@ -109,6 +184,18 @@ def parse_args():
         action="store_false",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--save-diagnostic-pdf",
+        dest="save_diagnostic_pdf",
+        action="store_true",
+        help="Also save PDF copies of training diagnostic plots.",
+    )
+    parser.add_argument(
+        "--skip-diagnostic-pdf",
+        dest="save_diagnostic_pdf",
+        action="store_false",
+        help="Skip PDF copies of training diagnostic plots and save only PNGs.",
+    )
     return parser.parse_args()
 
 
@@ -119,16 +206,18 @@ def sanitize_tag(value):
 def resolve_observable_tag(observable_mode):
     observable_mode_map = {
         "abs": "abs",
-        "complex": "complex_split",
         "complex_split": "complex_split",
         "eleHP": "eleHP",
         "HP": "HP",
-        "identity": "identity",
         "roi_mean": "roi_mean",
+        "roi_mean_slow_band_power": "roi_mean_slow_band_power",
         "slow_band_power": "slow_band_power",
+        "slow_band_power_svd": "slow_band_power_svd",
         "svd": "svd",
         "HP_svd100": "HP_svd100",
         "global_svd100": "global_svd100",
+        "gsvd100_ds": "gsvd100_ds",
+        "global_slow_band_power_svd100": "global_slow_band_power_svd100",
     }
     return observable_mode_map[observable_mode]
 
@@ -168,8 +257,15 @@ def restore_best_checkpoint_for_export(solver, best_checkpoint_path):
     solver.eigenvectors = solver.eigenvectors_var.numpy().astype(np.complex128, copy=False)
     solver.eigenvalues = solver.eigenvalues_var.numpy().astype(np.complex128, copy=False)
     solver.reg = float(reg_var.numpy())
-    solver.eigvec_cond = float(np.linalg.cond(solver.eigenvectors))
-    solver.compute_mode()
+    if (
+        getattr(solver, "spectral_sync_mode", "dual") == "pre_only"
+        or bool(getattr(solver, "recompute_spectral_after_checkpoint_restore", False))
+    ):
+        print("Recomputing final spectral state from restored best weights (non-dual training schedule).")
+        solver.compute_final_info()
+    else:
+        solver.eigvec_cond = float(np.linalg.cond(solver.eigenvectors))
+        solver.compute_mode()
     solver._sync_training_spectral_state()
     print(f"Restored best checkpoint for export: {latest_checkpoint}")
 
@@ -188,22 +284,31 @@ def as_scalar_or_nan(value):
         return np.nan
 
 
-def history_array(history, key):
+def history_array(history, key, dtype=np.float64):
     return np.asarray(
         [as_scalar_or_nan(item.get(key, np.nan)) for item in history],
-        dtype=np.float32,
+        dtype=dtype,
     )
 
 
-def solver_attr_array(solver, key):
-    return np.ravel(np.asarray(getattr(solver, key, []), dtype=np.float32))
+def solver_attr_array(solver, key, dtype=np.float64):
+    return np.ravel(np.asarray(getattr(solver, key, []), dtype=dtype))
 
 
-def build_shared_outputs(solver, loss_all, val_loss_all, export_metadata=None, snapshot_metadata=None):
-    evalues = np.asarray(solver.eigenvalues.T, dtype=np.complex64)
-    kpm_modes = np.asarray(solver.compute_mode().T, dtype=np.complex64)
-    loss_array = np.asarray(loss_all, dtype=np.float32)
-    val_loss_array = np.asarray(val_loss_all, dtype=np.float32)
+def build_shared_outputs(
+    solver,
+    loss_all,
+    val_loss_all,
+    export_metadata=None,
+    snapshot_metadata=None,
+    export_precision="double",
+):
+    export_real_dtype = export_real_numpy_dtype(export_precision)
+    export_complex_dtype = export_complex_numpy_dtype(export_precision)
+    evalues = np.asarray(solver.eigenvalues.T, dtype=export_complex_dtype)
+    kpm_modes = np.asarray(solver.compute_mode().T, dtype=export_complex_dtype)
+    loss_array = np.asarray(loss_all, dtype=export_real_dtype)
+    val_loss_array = np.asarray(val_loss_all, dtype=export_real_dtype)
     n_dict = int(np.shape(evalues)[0])
     export_metadata = export_metadata or {}
     snapshot_metadata = snapshot_metadata or {}
@@ -218,43 +323,63 @@ def build_shared_outputs(solver, loss_all, val_loss_all, export_metadata=None, s
             export_metadata.get("requested_loss_mode", loss_mode),
         )
     )
-    loss_epsilon = np.float64(
+    loss_epsilon = export_real_dtype(
         as_scalar_or_nan(getattr(solver, "loss_epsilon", export_metadata.get("loss_epsilon", np.nan)))
     )
     time_metadata = export_metadata.get("time_metadata", {}) if export_metadata else {}
-    final_eigvec_cond = np.float32(as_scalar_or_nan(getattr(solver, "eigvec_cond", np.nan)))
+    final_eigvec_cond = export_real_dtype(as_scalar_or_nan(getattr(solver, "eigvec_cond", np.nan)))
     best_checkpoint_path = str(getattr(solver, "best_checkpoint_path", "") or "")
     final_checkpoint_path = str(getattr(solver, "final_checkpoint_path", "") or "")
     num_outer_epochs = int(len(outer_history))
-    inner_train_metric_squared_history = solver_attr_array(solver, "inner_train_metric_squared_history")
-    inner_val_metric_squared_history = solver_attr_array(solver, "inner_val_metric_squared_history")
-    inner_train_metric_per_dim_history = solver_attr_array(solver, "inner_train_metric_per_dim_history")
-    inner_val_metric_per_dim_history = solver_attr_array(solver, "inner_val_metric_per_dim_history")
+    inner_train_metric_squared_history = solver_attr_array(
+        solver, "inner_train_metric_squared_history", dtype=export_real_dtype
+    )
+    inner_val_metric_squared_history = solver_attr_array(
+        solver, "inner_val_metric_squared_history", dtype=export_real_dtype
+    )
+    inner_train_metric_per_dim_history = solver_attr_array(
+        solver, "inner_train_metric_per_dim_history", dtype=export_real_dtype
+    )
+    inner_val_metric_per_dim_history = solver_attr_array(
+        solver, "inner_val_metric_per_dim_history", dtype=export_real_dtype
+    )
     inner_train_metric_relative_target_history = solver_attr_array(
-        solver, "inner_train_metric_relative_target_history"
+        solver, "inner_train_metric_relative_target_history", dtype=export_real_dtype
     )
     inner_val_metric_relative_target_history = solver_attr_array(
-        solver, "inner_val_metric_relative_target_history"
+        solver, "inner_val_metric_relative_target_history", dtype=export_real_dtype
     )
 
     if num_outer_epochs > 0:
-        outer_epoch_history = history_array(outer_history, "outer_epoch")
-        outer_train_metric_history = history_array(outer_history, "train_metric")
-        outer_val_metric_history = history_array(outer_history, "val_metric")
-        outer_eigvec_cond_history = history_array(outer_history, "eigvec_cond")
-        outer_lr_history = history_array(outer_history, "lr")
-        outer_reg_history = history_array(outer_history, "reg")
-        outer_inner_train_last_history = history_array(outer_history, "inner_train_last")
-        outer_inner_val_last_history = history_array(outer_history, "inner_val_last")
-        outer_train_metric_squared_history = history_array(outer_history, "train_metric_squared")
-        outer_val_metric_squared_history = history_array(outer_history, "val_metric_squared")
-        outer_train_metric_per_dim_history = history_array(outer_history, "train_metric_per_dim")
-        outer_val_metric_per_dim_history = history_array(outer_history, "val_metric_per_dim")
+        outer_epoch_history = history_array(outer_history, "outer_epoch", dtype=export_real_dtype)
+        outer_train_metric_history = history_array(outer_history, "train_metric", dtype=export_real_dtype)
+        outer_val_metric_history = history_array(outer_history, "val_metric", dtype=export_real_dtype)
+        outer_eigvec_cond_history = history_array(outer_history, "eigvec_cond", dtype=export_real_dtype)
+        outer_lr_history = history_array(outer_history, "lr", dtype=export_real_dtype)
+        outer_reg_history = history_array(outer_history, "reg", dtype=export_real_dtype)
+        outer_inner_train_last_history = history_array(
+            outer_history, "inner_train_last", dtype=export_real_dtype
+        )
+        outer_inner_val_last_history = history_array(
+            outer_history, "inner_val_last", dtype=export_real_dtype
+        )
+        outer_train_metric_squared_history = history_array(
+            outer_history, "train_metric_squared", dtype=export_real_dtype
+        )
+        outer_val_metric_squared_history = history_array(
+            outer_history, "val_metric_squared", dtype=export_real_dtype
+        )
+        outer_train_metric_per_dim_history = history_array(
+            outer_history, "train_metric_per_dim", dtype=export_real_dtype
+        )
+        outer_val_metric_per_dim_history = history_array(
+            outer_history, "val_metric_per_dim", dtype=export_real_dtype
+        )
         outer_train_metric_relative_target_history = history_array(
-            outer_history, "train_metric_relative_target"
+            outer_history, "train_metric_relative_target", dtype=export_real_dtype
         )
         outer_val_metric_relative_target_history = history_array(
-            outer_history, "val_metric_relative_target"
+            outer_history, "val_metric_relative_target", dtype=export_real_dtype
         )
 
         finite_val_mask = np.isfinite(outer_val_metric_history)
@@ -262,12 +387,12 @@ def build_shared_outputs(solver, loss_all, val_loss_all, export_metadata=None, s
             val_candidates = np.where(finite_val_mask, outer_val_metric_history, np.inf)
             best_idx = int(np.argmin(val_candidates))
             best_outer_index = best_idx
-            best_outer_epoch = np.float32(outer_epoch_history[best_idx])
-            best_val_metric = np.float32(outer_val_metric_history[best_idx])
-            best_train_metric_at_best = np.float32(outer_train_metric_history[best_idx])
-            best_eigvec_cond_at_best = np.float32(outer_eigvec_cond_history[best_idx])
-            best_lr_at_best = np.float32(outer_lr_history[best_idx])
-            best_reg_at_best = np.float32(outer_reg_history[best_idx])
+            best_outer_epoch = export_real_dtype(outer_epoch_history[best_idx])
+            best_val_metric = export_real_dtype(outer_val_metric_history[best_idx])
+            best_train_metric_at_best = export_real_dtype(outer_train_metric_history[best_idx])
+            best_eigvec_cond_at_best = export_real_dtype(outer_eigvec_cond_history[best_idx])
+            best_lr_at_best = export_real_dtype(outer_lr_history[best_idx])
+            best_reg_at_best = export_real_dtype(outer_reg_history[best_idx])
         else:
             best_outer_index = np.nan
             best_outer_epoch = np.nan
@@ -277,7 +402,7 @@ def build_shared_outputs(solver, loss_all, val_loss_all, export_metadata=None, s
             best_lr_at_best = np.nan
             best_reg_at_best = np.nan
     else:
-        empty_history = np.array([], dtype=np.float32)
+        empty_history = np.array([], dtype=export_real_dtype)
         outer_epoch_history = empty_history
         outer_train_metric_history = empty_history
         outer_val_metric_history = empty_history
@@ -357,7 +482,7 @@ def build_shared_outputs(solver, loss_all, val_loss_all, export_metadata=None, s
         value = time_metadata.get(key, None)
         scalar_value = as_scalar_or_nan(value)
         if np.isfinite(scalar_value) and scalar_value > 0:
-            shared_outputs[key] = np.float64(scalar_value)
+            shared_outputs[key] = export_real_dtype(scalar_value)
 
     for key in [
         "session_dx",
@@ -387,7 +512,15 @@ def build_shared_outputs(solver, loss_all, val_loss_all, export_metadata=None, s
     return shared_outputs, n_dict
 
 
-def save_training_loss_diagnostics(output_root, title, loss_all, val_loss_all, solver):
+def save_training_loss_diagnostics(
+    output_root,
+    title,
+    loss_all,
+    val_loss_all,
+    solver,
+    diagnostic_dpi=120,
+    save_diagnostic_pdf=True,
+):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -478,11 +611,13 @@ def save_training_loss_diagnostics(output_root, title, loss_all, val_loss_all, s
 
     png_path = os.path.join(output_root, "training_loss_diagnostics.png")
     pdf_path = os.path.join(output_root, "training_loss_diagnostics.pdf")
-    fig.savefig(png_path, dpi=180)
-    fig.savefig(pdf_path)
+    fig.savefig(png_path, dpi=diagnostic_dpi)
+    if save_diagnostic_pdf:
+        fig.savefig(pdf_path)
     plt.close(fig)
     print(f"saved training diagnostics: {png_path}")
-    print(f"saved training diagnostics: {pdf_path}")
+    if save_diagnostic_pdf:
+        print(f"saved training diagnostics: {pdf_path}")
 
     has_inner_metric_history = any(train.size or val.size for _, train, val in inner_metric_specs)
     if has_inner_metric_history:
@@ -518,11 +653,13 @@ def save_training_loss_diagnostics(output_root, title, loss_all, val_loss_all, s
 
         inner_png_path = os.path.join(output_root, "training_inner_loss_metrics.png")
         inner_pdf_path = os.path.join(output_root, "training_inner_loss_metrics.pdf")
-        fig2.savefig(inner_png_path, dpi=180)
-        fig2.savefig(inner_pdf_path)
+        fig2.savefig(inner_png_path, dpi=diagnostic_dpi)
+        if save_diagnostic_pdf:
+            fig2.savefig(inner_pdf_path)
         plt.close(fig2)
         print(f"saved inner loss metrics: {inner_png_path}")
-        print(f"saved inner loss metrics: {inner_pdf_path}")
+        if save_diagnostic_pdf:
+            print(f"saved inner loss metrics: {inner_pdf_path}")
     return png_path
 
 
@@ -649,17 +786,39 @@ def read_observable_time_metadata(data_full_path):
     return metadata
 
 
-def load_observable_chunk(data_full_path, dataset_key, start_idx, end_idx):
+def solver_real_numpy_dtype(solver):
+    dtype = getattr(solver, "training_real_dtype", None)
+    if dtype is not None and hasattr(dtype, "as_numpy_dtype"):
+        return dtype.as_numpy_dtype
+    return np.float64
+
+
+def solver_complex_numpy_dtype(solver):
+    dtype = getattr(solver, "training_complex_dtype", None)
+    if dtype is not None and hasattr(dtype, "as_numpy_dtype"):
+        return dtype.as_numpy_dtype
+    return np.complex128
+
+
+def export_real_numpy_dtype(export_precision):
+    return np.float32 if str(export_precision).strip().lower() == "single" else np.float64
+
+
+def export_complex_numpy_dtype(export_precision):
+    return np.complex64 if str(export_precision).strip().lower() == "single" else np.complex128
+
+
+def load_observable_chunk(data_full_path, dataset_key, start_idx, end_idx, dtype=np.float64):
     with h5py.File(data_full_path, "r") as f:
         chunk = np.array(f[dataset_key][:, start_idx:end_idx]).T
-    return chunk.astype(np.float32, copy=False)
+    return chunk.astype(dtype, copy=False)
 
 
-def load_observable_rows(data_full_path, dataset_key, row_idx):
+def load_observable_rows(data_full_path, dataset_key, row_idx, dtype=np.float64):
     row_idx = np.asarray(row_idx, dtype=np.int64).reshape(-1)
     with h5py.File(data_full_path, "r") as f:
         chunk = np.array(f[dataset_key][:, row_idx]).T
-    return chunk.astype(np.float32, copy=False)
+    return chunk.astype(dtype, copy=False)
 
 
 def export_outputs(
@@ -671,18 +830,23 @@ def export_outputs(
     chunk_size,
     loss_all,
     val_loss_all,
+    export_mode="full",
+    export_precision="double",
     export_metadata=None,
     snapshot_metadata=None,
 ):
     num_samples = get_num_samples(data_full_path, dataset_key)
     num_chunks = int(np.ceil(num_samples / float(chunk_size)))
     out_base = Path(data_filename).stem
+    real_dtype = solver_real_numpy_dtype(solver)
+    complex_dtype = solver_complex_numpy_dtype(solver)
     shared_outputs, n_dict = build_shared_outputs(
         solver,
         loss_all,
         val_loss_all,
         export_metadata=export_metadata,
         snapshot_metadata=snapshot_metadata,
+        export_precision=export_precision,
     )
 
     summary_file = os.path.join(
@@ -691,6 +855,13 @@ def export_outputs(
     )
     scipy.io.savemat(summary_file, {"EDMD_outputs": shared_outputs}, long_field_names=True)
     print(f"saved summary: {summary_file}")
+
+    if export_mode != "full":
+        print(
+            "Skipping efuns chunk export because "
+            f"export_mode={export_mode!r}. Summary file has been saved."
+        )
+        return n_dict
 
     # These snapshot arrays describe the full dataset split and can be tens of
     # MiB each. Keep them once in the summary instead of repeating them in every
@@ -701,11 +872,16 @@ def export_outputs(
         if key not in CHUNK_EXCLUDED_SHARED_FIELDS
     }
 
+    export_complex_dtype = export_complex_numpy_dtype(export_precision)
+
     for i in range(num_chunks):
         start_idx = i * chunk_size
         end_idx = min((i + 1) * chunk_size, num_samples)
-        chunk_data = load_observable_chunk(data_full_path, dataset_key, start_idx, end_idx)
-        efuns = np.asarray(solver.eigenfunctions(chunk_data), dtype=np.complex64)
+        chunk_data = load_observable_chunk(data_full_path, dataset_key, start_idx, end_idx, dtype=real_dtype)
+        efuns = np.asarray(solver.eigenfunctions(chunk_data), dtype=complex_dtype).astype(
+            export_complex_dtype,
+            copy=False,
+        )
 
         edmd_outputs = {
             "EDMD_outputs": {
@@ -737,10 +913,13 @@ def export_psi_outputs(
     data_filename,
     chunk_size,
     n_dict,
+    export_precision="double",
     snapshot_metadata=None,
 ):
     out_base = Path(data_filename).stem
     snapshot_metadata = snapshot_metadata or {}
+    real_dtype = solver_real_numpy_dtype(solver)
+    export_real_dtype = export_real_numpy_dtype(export_precision)
     valid_idx_x = snapshot_metadata.get("valid_idx_x", None)
     valid_idx_y = snapshot_metadata.get("valid_idx_y", None)
 
@@ -756,10 +935,14 @@ def export_psi_outputs(
             start_idx = i * chunk_size
             end_idx = min((i + 1) * chunk_size, num_pairs)
             pair_idx = np.arange(start_idx, end_idx, dtype=np.int64)
-            chunk_x = load_observable_rows(data_full_path, dataset_key, valid_idx_x[pair_idx])
-            chunk_y = load_observable_rows(data_full_path, dataset_key, valid_idx_y[pair_idx])
-            psi_x = solver.dic.call(chunk_x).numpy().T.astype(np.float32, copy=False)
-            psi_y = solver.dic.call(chunk_y).numpy().T.astype(np.float32, copy=False)
+            chunk_x = load_observable_rows(
+                data_full_path, dataset_key, valid_idx_x[pair_idx], dtype=real_dtype
+            )
+            chunk_y = load_observable_rows(
+                data_full_path, dataset_key, valid_idx_y[pair_idx], dtype=real_dtype
+            )
+            psi_x = solver.dic.call(chunk_x).numpy().T.astype(export_real_dtype, copy=False)
+            psi_y = solver.dic.call(chunk_y).numpy().T.astype(export_real_dtype, copy=False)
             edmd_outputs = {
                 "EDMD_outputs": {
                     "Psi_X": psi_x,
@@ -791,8 +974,8 @@ def export_psi_outputs(
     for i in range(num_chunks):
         start_idx = i * chunk_size
         end_idx = min((i + 1) * chunk_size, num_samples)
-        chunk_data = load_observable_chunk(data_full_path, dataset_key, start_idx, end_idx)
-        psi = solver.dic.call(chunk_data).numpy().T.astype(np.float32, copy=False)
+        chunk_data = load_observable_chunk(data_full_path, dataset_key, start_idx, end_idx, dtype=real_dtype)
+        psi = solver.dic.call(chunk_data).numpy().T.astype(export_real_dtype, copy=False)
         psi_x = psi[:, 0:-1]
         psi_y = psi[:, 1:]
         edmd_outputs = {
@@ -824,6 +1007,10 @@ def main():
     solver_dir = args.solver_dir or os.path.join(project_root, "solver")
     ensure_sys_path(project_root, solver_dir)
     ensure_roots(args.data_root, args.output_parent, args.checkpoint_parent, args.log_parent)
+    os.environ["PYTHONHASHSEED"] = str(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    tf.keras.utils.set_random_seed(args.seed)
 
     print(f"project_root: {project_root}")
     print(f"solver_dir: {solver_dir}")
@@ -833,6 +1020,7 @@ def main():
     print(f"log_parent: {args.log_parent}")
     print(f"run_name_base: {args.run_name_base}")
     print(f"experiment_name: {args.experiment_name}")
+    print(f"seed: {args.seed}")
 
     actual_device = edmd_utils.set_device(args.selected_device, require_gpu=args.require_gpu)
     print(f"actual_device: {actual_device}")
@@ -840,6 +1028,7 @@ def main():
         args.solver_name,
         search_dirs=[solver_dir, project_root],
     )
+    print(f"solver_name: {args.solver_name} -> {koopman_solver_cls.__module__}.{koopman_solver_cls.__name__}")
 
     basis_function = PsiNN(
         layer_sizes=list(args.layer_sizes),
@@ -883,6 +1072,25 @@ def main():
         f"loss_mode: {effective_loss_mode} (requested={requested_loss_mode}), "
         f"loss_epsilon: {args.loss_epsilon:.3e}"
     )
+    print(
+        "numeric policy: "
+        f"training_policy={args.training_policy}, "
+        f"analysis_dtype={args.analysis_dtype}, "
+        f"gram_dtype={args.gram_dtype}, "
+        f"spectral_dtype={args.spectral_dtype}"
+    )
+    print(
+        "training schedule: "
+        f"train_shuffle={args.train_shuffle}, "
+        f"spectral_sync_mode={args.spectral_sync_mode}"
+    )
+    print(
+        "export policy: "
+        f"export_mode={args.export_mode}, "
+        f"export_precision={args.export_precision}, "
+        f"diagnostic_dpi={args.diagnostic_dpi}, "
+        f"save_diagnostic_pdf={args.save_diagnostic_pdf}"
+    )
     print(f"resume: {args.resume}, resume_mode: {args.resume_mode or ('final' if args.resume else 'fresh')}")
     print(f"effective_experiment_name: {effective_experiment_name}")
     print(f"run_label: {run_label}")
@@ -905,12 +1113,16 @@ def main():
             "EDMD output chunks will not contain sampling interval metadata."
         )
 
+    load_dtype = np.float64 if (
+        str(args.training_policy).strip().lower() == "float64"
+        or str(args.analysis_dtype).strip().lower() == "float64"
+    ) else np.float32
     data = edmd_utils.load_data(
         data_filename,
         data_input_path,
         file_type,
         field_name,
-    ).T.astype(np.float32, copy=False)
+    ).T.astype(load_dtype, copy=False)
     print("Loaded DATA shape:", data.shape)
     print("Loaded DATA dtype:", data.dtype)
     print(f"Loaded DATA size: {data.nbytes / (1024 ** 3):.2f} GiB")
@@ -929,7 +1141,7 @@ def main():
             time_metadata["session_end_idx"],
             train_ratio=args.train_ratio,
             lag=1,
-            seed=100,
+            seed=args.seed,
             matlab_indexing=True,
         )
         print(
@@ -938,8 +1150,19 @@ def main():
             f"{np.asarray(time_metadata['session_start_idx']).size} sessions"
         )
     else:
-        data_train, data_valid = edmd_utils.transfer_data_format(data, train_ratio=args.train_ratio)
+        data_train, data_valid = edmd_utils.transfer_data_format(
+            data,
+            train_ratio=args.train_ratio,
+            seed=args.seed,
+        )
         print("Using continuous snapshot pairs because session metadata was not found.")
+    print(
+        "Snapshot storage mode: "
+        f"train_x={type(data_train[0]).__name__}, "
+        f"train_y={type(data_train[1]).__name__}, "
+        f"valid_x={type(data_valid[0]).__name__}, "
+        f"valid_y={type(data_valid[1]).__name__}"
+    )
     print("Data shape: ", data_train[1].shape)
     del data
     gc.collect()
@@ -948,6 +1171,10 @@ def main():
         dic=basis_function,
         target_dim=data_train[0].shape[-1],
         reg=args.reg,
+        training_policy=args.training_policy,
+        analysis_dtype=args.analysis_dtype,
+        gram_dtype=args.gram_dtype,
+        spectral_dtype=args.spectral_dtype,
         residual_form=args.residual_form,
         loss_mode=effective_loss_mode,
         loss_epsilon=args.loss_epsilon,
@@ -984,10 +1211,23 @@ def main():
             lr_decay_factor=args.lr_decay_factor,
             Nepoch=args.inner_epochs,
             end_condition=args.end_condition,
+            train_shuffle=args.train_shuffle,
+            spectral_sync_mode=args.spectral_sync_mode,
+            shuffle_seed=args.seed,
             checkpoint_path=checkpoint_path,
             best_checkpoint_path=best_checkpoint_path,
             resume=args.resume,
             resume_mode=args.resume_mode,
+            run_metadata={
+                "experiment_name": args.experiment_name,
+                "effective_experiment_name": effective_experiment_name,
+                "dataset_stem": args.dataset_stem,
+                "observable_mode": args.observable_mode,
+                "residual_form": args.residual_form,
+                "seed": int(args.seed),
+                "train_shuffle": bool(args.train_shuffle),
+                "spectral_sync_mode": args.spectral_sync_mode,
+            },
         )
         loss_all.extend(temp_loss)
         val_loss_all.extend(temp_val_loss)
@@ -1011,6 +1251,7 @@ def main():
         "loss_mode": effective_loss_mode,
         "requested_loss_mode": requested_loss_mode,
         "loss_epsilon": args.loss_epsilon,
+        "seed": int(args.seed),
         "time_metadata": time_metadata,
     }
     n_dict = export_outputs(
@@ -1022,6 +1263,8 @@ def main():
         chunk_size=args.chunk_size,
         loss_all=loss_all,
         val_loss_all=val_loss_all,
+        export_mode=args.export_mode,
+        export_precision=args.export_precision,
         export_metadata=export_metadata,
         snapshot_metadata=snapshot_metadata,
     )
@@ -1034,6 +1277,8 @@ def main():
         loss_all=loss_all,
         val_loss_all=val_loss_all,
         solver=solver,
+        diagnostic_dpi=args.diagnostic_dpi,
+        save_diagnostic_pdf=args.save_diagnostic_pdf,
     )
 
     if args.export_psi:
@@ -1046,6 +1291,7 @@ def main():
             data_filename=data_filename,
             chunk_size=args.chunk_size,
             n_dict=n_dict,
+            export_precision=args.export_precision,
             snapshot_metadata=snapshot_metadata,
         )
     else:

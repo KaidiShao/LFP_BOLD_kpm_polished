@@ -67,7 +67,11 @@ for i = 1:n_comp
         'Color', plot_cfg.component_line_color, ...
         'LineWidth', 1.2);
 
-    local_add_event_patches(ax, plot_cfg.event_windows, plot_cfg.event_colors, plot_cfg.event_alpha);
+    local_add_event_patches(ax, plot_cfg.event_windows, plot_cfg.event_colors, ...
+        plot_cfg.event_alpha, plot_cfg.event_edge_alpha);
+    if i == 1
+        local_add_event_legend(ax, plot_cfg);
+    end
     uistack(findobj(ax, 'Type', 'Line'), 'top');
 
     local_style_axes(ax, plot_cfg);
@@ -167,14 +171,29 @@ end
 
 if ~isfield(plot_cfg, 'event_colors') || isempty(plot_cfg.event_colors)
     plot_cfg.event_colors = [
-        0.96, 0.84, 0.62;
-        0.70, 0.80, 0.97;
-        0.88, 0.72, 0.80;
-        0.85, 0.72, 0.95];
+        0.98, 0.72, 0.18;
+        0.20, 0.75, 1.00;
+        0.78, 0.36, 1.00;
+        0.16, 0.86, 0.56;
+        1.00, 0.22, 0.22];
+end
+
+if ~isfield(plot_cfg, 'event_labels') || isempty(plot_cfg.event_labels)
+    plot_cfg.event_labels = cellstr(compose('state %d', 1:size(plot_cfg.event_colors, 1)));
+else
+    plot_cfg.event_labels = cellstr(string(plot_cfg.event_labels(:)));
+end
+
+if ~isfield(plot_cfg, 'show_event_legend') || isempty(plot_cfg.show_event_legend)
+    plot_cfg.show_event_legend = true;
 end
 
 if ~isfield(plot_cfg, 'event_alpha') || isempty(plot_cfg.event_alpha)
     plot_cfg.event_alpha = 0.38;
+end
+
+if ~isfield(plot_cfg, 'event_edge_alpha') || isempty(plot_cfg.event_edge_alpha)
+    plot_cfg.event_edge_alpha = min(1, max(0.45, plot_cfg.event_alpha + 0.25));
 end
 
 if ~isfield(plot_cfg, 'title') || isempty(plot_cfg.title)
@@ -261,7 +280,7 @@ box(ax, 'off');
 end
 
 
-function local_add_event_patches(ax, event_windows, event_colors, event_alpha)
+function local_add_event_patches(ax, event_windows, event_colors, event_alpha, event_edge_alpha)
 if isempty(event_windows)
     return;
 end
@@ -275,10 +294,48 @@ for i = 1:size(event_windows, 1)
     patch(ax, [x1, x2, x2, x1], [y_lim(1), y_lim(1), y_lim(2), y_lim(2)], ...
         event_colors(color_idx, :), ...
         'FaceAlpha', event_alpha, ...
-        'EdgeColor', 'none', ...
+        'EdgeColor', event_colors(color_idx, :), ...
+        'EdgeAlpha', event_edge_alpha, ...
+        'LineWidth', 0.7, ...
         'HandleVisibility', 'off');
 end
 ylim(ax, y_lim);
+end
+
+
+function local_add_event_legend(ax, plot_cfg)
+if ~plot_cfg.show_event_legend || isempty(plot_cfg.event_windows)
+    return;
+end
+
+codes = unique(round(double(plot_cfg.event_windows(:, 3))));
+codes = codes(isfinite(codes) & codes >= 1);
+if isempty(codes)
+    return;
+end
+
+handles = gobjects(numel(codes), 1);
+labels = cell(numel(codes), 1);
+for i = 1:numel(codes)
+    color_idx = mod(max(1, codes(i)) - 1, size(plot_cfg.event_colors, 1)) + 1;
+    handles(i) = patch(ax, NaN, NaN, plot_cfg.event_colors(color_idx, :), ...
+        'FaceAlpha', 0.82, ...
+        'EdgeColor', plot_cfg.event_colors(color_idx, :), ...
+        'LineWidth', 1.0);
+    if codes(i) <= numel(plot_cfg.event_labels)
+        labels{i} = plot_cfg.event_labels{codes(i)};
+    else
+        labels{i} = sprintf('state %d', codes(i));
+    end
+end
+
+leg = legend(ax, handles, labels, ...
+    'Location', 'northeastoutside', ...
+    'Interpreter', 'none', ...
+    'TextColor', plot_cfg.text_color, ...
+    'Color', plot_cfg.background_color, ...
+    'EdgeColor', plot_cfg.grid_color);
+leg.Box = 'on';
 end
 
 

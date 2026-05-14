@@ -47,18 +47,20 @@ Current datasets:
 
 For a dataset such as `f12m01` or `e10gb1`, the event-analysis outputs should use:
 
-- `event_detection`
-- `event_density`
-- `consensus_states`
-- `consensus_state_summary`
-- `event_diversity_windows`
-- `consensus_state_diversity_windows` (optional; currently used for `e10gb1`)
+- `pipeline2_event_detection`
+- `pipeline2_event_density`
+- `pipeline2_consensus_states`
+- `pipeline2_consensus_state_summary`
+- `pipeline2_event_diversity_windows`
+- `pipeline2_consensus_state_diversity_windows` (optional; currently used for `e10gb1`)
+- `pipeline2_figures_event_diversity_top_window_plots`
+- `pipeline2_figures_consensus_state_top_window_plots`
 
 Examples:
 
-- `E:\DataPons_processed\f12m01\event_detection`
-- `E:\DataPons_processed\f12m01\event_diversity_windows`
-- `E:\DataPons_processed\e10gb1\consensus_state_diversity_windows`
+- `E:\DataPons_processed\f12m01\pipeline2_event_detection`
+- `E:\DataPons_processed\f12m01\pipeline2_event_diversity_windows`
+- `E:\DataPons_processed\e10gb1\pipeline2_consensus_state_diversity_windows`
 
 ## Current Dataset State
 
@@ -66,61 +68,60 @@ Examples:
 
 Currently present:
 
-- `event_detection`
-- `event_density`
-- `consensus_states`
-- `consensus_state_summary`
-- `event_diversity_windows`
-- `koopman_postprocessing`
-- `reskoopnet_dictionary`
-- `spectrograms`
+- `pipeline2_event_detection`
+- `pipeline2_event_density`
+- `pipeline2_consensus_states`
+- `pipeline2_consensus_state_summary`
+- `pipeline2_event_diversity_windows`
+- `pipeline1_reskoopnet_dictionary`
+- `pipeline1_spectrograms`
 
 Event-line files currently present:
 
-- `event_detection\f12m01_bandpass_events_3bands.mat`
-- `event_density\f12m01_event_density_2s.mat`
-- `consensus_states\f12m01_consensus_states_min4ch.mat`
-- `consensus_state_summary\f12m01_consensus_state_type_summary.mat`
-- `consensus_state_summary\f12m01_consensus_state_type_summary.csv`
-- `event_diversity_windows\f12m01_event_diversity_windows_5000samp.mat`
-- `event_diversity_windows\f12m01_event_diversity_windows_5000samp.csv`
-- `event_diversity_windows\f12m01_event_diversity_windows_5000samp_top.csv`
-- `event_diversity_windows\top_window_plots\...`
+- `pipeline2_event_detection\f12m01_bandpass_events_3bands.mat`
+- `pipeline2_event_density\f12m01_event_density_2s.mat`
+- `pipeline2_consensus_states\f12m01_consensus_states_min4ch.mat`
+- `pipeline2_consensus_state_summary\f12m01_consensus_state_type_summary.mat`
+- `pipeline2_consensus_state_summary\f12m01_consensus_state_type_summary.csv`
+- `pipeline2_event_diversity_windows\f12m01_event_diversity_windows_5000samp.mat`
+- `pipeline2_event_diversity_windows\f12m01_event_diversity_windows_5000samp.csv`
+- `pipeline2_event_diversity_windows\f12m01_event_diversity_windows_5000samp_top.csv`
+- `pipeline2_figures_event_diversity_top_window_plots\...`
 
 ### `e10gb1`
 
 Currently present:
 
-- `event_detection`
-- `event_density`
-- `consensus_states`
-- `consensus_state_summary`
-- `event_diversity_windows`
-- `consensus_state_diversity_windows`
-- `reskoopnet_dictionary`
-- `spectrograms`
+- `pipeline2_event_detection`
+- `pipeline2_event_density`
+- `pipeline2_consensus_states`
+- `pipeline2_consensus_state_summary`
+- `pipeline2_event_diversity_windows`
+- `pipeline2_consensus_state_diversity_windows`
+- `pipeline1_reskoopnet_dictionary`
+- `pipeline1_spectrograms`
 
 Event-line files currently present:
 
-- `event_detection\e10gb1_bandpass_events_3bands.mat`
-- `event_density\e10gb1_event_density_2s.mat`
-- `consensus_states\e10gb1_consensus_states_min5ch.mat`
-- `consensus_state_summary\e10gb1_consensus_state_type_summary.mat`
-- `consensus_state_summary\e10gb1_consensus_state_type_summary.csv`
-- `event_diversity_windows\e10gb1_event_diversity_windows_5000samp.mat`
-- `event_diversity_windows\e10gb1_event_diversity_windows_5000samp.csv`
-- `event_diversity_windows\e10gb1_event_diversity_windows_5000samp_top.csv`
-- `event_diversity_windows\e10gb1_event_diversity_windows_6000samp.mat`
-- `event_diversity_windows\e10gb1_event_diversity_windows_6000samp.csv`
-- `event_diversity_windows\e10gb1_event_diversity_windows_6000samp_top.csv`
-- `event_diversity_windows\e10gb1_event_diversity_windows_6000samp_globalwin.mat`
-- `event_diversity_windows\e10gb1_event_diversity_windows_6000samp_globalwin.csv`
-- `event_diversity_windows\e10gb1_event_diversity_windows_6000samp_globalwin_top.csv`
-- `event_diversity_windows\top_window_plots\...`
-- `consensus_state_diversity_windows\e10gb1_consensus_state_diversity_windows_6000samp_globalwin.mat`
-- `consensus_state_diversity_windows\e10gb1_consensus_state_diversity_windows_6000samp_globalwin.csv`
-- `consensus_state_diversity_windows\e10gb1_consensus_state_diversity_windows_6000samp_globalwin_top.csv`
-- `consensus_state_diversity_windows\top_window_plots\...`
+- `pipeline2_event_detection\e10gb1_bandpass_events_3bands.mat`
+- `pipeline2_event_density\e10gb1_event_density_2s.mat`
+- `pipeline2_consensus_states\e10gb1_consensus_states_min5ch.mat`
+- `pipeline2_consensus_state_summary\e10gb1_consensus_state_type_summary.mat`
+- `pipeline2_consensus_state_summary\e10gb1_consensus_state_type_summary.csv`
+- `pipeline2_event_diversity_windows\e10gb1_event_diversity_windows_5000samp.mat`
+- `pipeline2_event_diversity_windows\e10gb1_event_diversity_windows_5000samp.csv`
+- `pipeline2_event_diversity_windows\e10gb1_event_diversity_windows_5000samp_top.csv`
+- `pipeline2_event_diversity_windows\e10gb1_event_diversity_windows_6000samp.mat`
+- `pipeline2_event_diversity_windows\e10gb1_event_diversity_windows_6000samp.csv`
+- `pipeline2_event_diversity_windows\e10gb1_event_diversity_windows_6000samp_top.csv`
+- `pipeline2_event_diversity_windows\e10gb1_event_diversity_windows_6000samp_globalwin.mat`
+- `pipeline2_event_diversity_windows\e10gb1_event_diversity_windows_6000samp_globalwin.csv`
+- `pipeline2_event_diversity_windows\e10gb1_event_diversity_windows_6000samp_globalwin_top.csv`
+- `pipeline2_figures_event_diversity_top_window_plots\...`
+- `pipeline2_consensus_state_diversity_windows\e10gb1_consensus_state_diversity_windows_6000samp_globalwin.mat`
+- `pipeline2_consensus_state_diversity_windows\e10gb1_consensus_state_diversity_windows_6000samp_globalwin.csv`
+- `pipeline2_consensus_state_diversity_windows\e10gb1_consensus_state_diversity_windows_6000samp_globalwin_top.csv`
+- `pipeline2_figures_consensus_state_top_window_plots\...`
 
 ## Pipeline Flow
 
@@ -140,7 +141,7 @@ Run:
 
 Output:
 
-- `event_detection\<dataset>_bandpass_events_3bands.mat`
+- `pipeline2_event_detection\<dataset>_bandpass_events_3bands.mat`
 
 This file is the main saved event-detection result and is later reloaded as `R`.
 
@@ -161,7 +162,7 @@ Then run:
 
 Output:
 
-- `event_density\<dataset>_event_density_2s.mat`
+- `pipeline2_event_density\<dataset>_event_density_2s.mat`
 
 ### Step 4. Consensus States
 
@@ -175,7 +176,7 @@ Then run:
 
 Output:
 
-- `consensus_states\<dataset>_consensus_states_<threshold>.mat`
+- `pipeline2_consensus_states\<dataset>_consensus_states_<threshold>.mat`
 
 Examples:
 
@@ -194,8 +195,8 @@ Then run:
 
 Outputs:
 
-- `consensus_state_summary\<dataset>_consensus_state_type_summary.mat`
-- `consensus_state_summary\<dataset>_consensus_state_type_summary.csv`
+- `pipeline2_consensus_state_summary\<dataset>_consensus_state_type_summary.mat`
+- `pipeline2_consensus_state_summary\<dataset>_consensus_state_type_summary.csv`
 
 ### Step 6. Diversity Windows
 
@@ -209,19 +210,19 @@ Then run:
 
 Outputs:
 
-- `event_diversity_windows\<dataset>_event_diversity_windows_5000samp.mat`
-- `event_diversity_windows\<dataset>_event_diversity_windows_5000samp.csv`
-- `event_diversity_windows\<dataset>_event_diversity_windows_5000samp_top.csv`
+- `pipeline2_event_diversity_windows\<dataset>_event_diversity_windows_5000samp.mat`
+- `pipeline2_event_diversity_windows\<dataset>_event_diversity_windows_5000samp.csv`
+- `pipeline2_event_diversity_windows\<dataset>_event_diversity_windows_5000samp_top.csv`
 
 For `e10gb1`, the canonical diversity output is now:
 
-- `event_diversity_windows\e10gb1_event_diversity_windows_6000samp_globalwin.mat`
-- `event_diversity_windows\e10gb1_event_diversity_windows_6000samp_globalwin.csv`
-- `event_diversity_windows\e10gb1_event_diversity_windows_6000samp_globalwin_top.csv`
+- `pipeline2_event_diversity_windows\e10gb1_event_diversity_windows_6000samp_globalwin.mat`
+- `pipeline2_event_diversity_windows\e10gb1_event_diversity_windows_6000samp_globalwin.csv`
+- `pipeline2_event_diversity_windows\e10gb1_event_diversity_windows_6000samp_globalwin_top.csv`
 
 Top-window plots should live under:
 
-- `event_diversity_windows\top_window_plots`
+- `pipeline2_figures_event_diversity_top_window_plots`
 
 For `e10gb1`, these top-window plots and matching reference figures should be interpreted relative to the canonical `6000samp_globalwin` ranking, not the older session-local rankings.
 
@@ -233,10 +234,10 @@ This is currently implemented for `e10gb1`:
 
 Outputs:
 
-- `consensus_state_diversity_windows\<dataset>_consensus_state_diversity_windows_6000samp_globalwin.mat`
-- `consensus_state_diversity_windows\<dataset>_consensus_state_diversity_windows_6000samp_globalwin.csv`
-- `consensus_state_diversity_windows\<dataset>_consensus_state_diversity_windows_6000samp_globalwin_top.csv`
-- `consensus_state_diversity_windows\top_window_plots\...`
+- `pipeline2_consensus_state_diversity_windows\<dataset>_consensus_state_diversity_windows_6000samp_globalwin.mat`
+- `pipeline2_consensus_state_diversity_windows\<dataset>_consensus_state_diversity_windows_6000samp_globalwin.csv`
+- `pipeline2_consensus_state_diversity_windows\<dataset>_consensus_state_diversity_windows_6000samp_globalwin_top.csv`
+- `pipeline2_figures_consensus_state_top_window_plots\...`
 
 This should be treated as the preferred consensus-state window-selection line when the goal is to find windows containing the largest variety of derived state labels.
 
@@ -267,14 +268,14 @@ The on-disk dataset layouts are already mostly consistent.
 Consistent items:
 
 - both datasets use the same core event-line directory names
-- both datasets keep diversity outputs inside `event_diversity_windows`
-- both datasets keep top-window diversity plots inside `event_diversity_windows\top_window_plots`
+- both datasets keep diversity outputs inside `pipeline2_event_diversity_windows`
+- both datasets keep top-window diversity plots inside `pipeline2_figures_event_diversity_top_window_plots`
 
 Known differences that are currently expected:
 
 - `f12m01` uses `min4ch` in the saved consensus filename
 - `e10gb1` uses `min5ch` in the saved consensus filename
-- `consensus_state_diversity_windows` currently exists only for `e10gb1`
+- `pipeline2_consensus_state_diversity_windows` currently exists only for `e10gb1`
 
 Known legacy / non-canonical diversity outputs that may still remain on disk:
 

@@ -15,18 +15,19 @@ The goal is to answer four practical questions:
 For maintenance purposes, treat this repo as:
 
 - 1 overall analysis framework
-- 7 operational pipelines
+- 8 operational pipelines
 - 1 optional comparison branch
 
-The seven operational pipelines are:
+The eight operational pipelines are:
 
 1. BLP dictionary pipeline
 2. BLP event-state pipeline
 3. BOLD observable pipeline
 4. ResKoopNet training/export pipeline
-5. BLP eigenfunction interpretation pipeline
-6. BOLD postprocessing pipeline
-7. BLP-BOLD cross-modal coupling pipeline
+5. BLP eigenfunction dimension-reduction pipeline
+6. BLP eigenfunction postprocessing pipeline
+7. BOLD postprocessing pipeline
+8. BLP-BOLD cross-modal coupling pipeline
 
 Optional branch:
 
@@ -39,10 +40,11 @@ Optional branch:
 | BLP dictionary pipeline | Turn raw BLP into ResKoopNet-ready observables. | `scripts/script_preprocess_e10gb1_to_observables_streamed.m`, `docs/raw_dataset_to_reskoopnet_pipeline.md` | spectrogram MAT files, ResKoopNet dictionary MAT files, observable CSVs |
 | BLP event-state pipeline | Turn raw BLP into events, densities, consensus states, and diversity windows. | `scripts/script_run_one_cfg_to_consensus_state_top_windows.m`, `scripts/script_run_cfgs_to_consensus_state_top_windows.m` | event MAT files, density MAT files, consensus-state MAT files, summary CSVs, top-window tables and plots |
 | BOLD observable pipeline | Turn raw BOLD ROI time series into standardized observable packages. | `scripts/script_build_one_cfg_bold_observables.m`, `scripts/script_build_cfgs_bold_observables.m` | per-mode BOLD observable MAT files, session-aware snapshots |
-| ResKoopNet training/export pipeline | Train MLP ResKoopNet models and export EDMD-style outputs. | `python_scripts/autodl/run_autodl_reskoopnet_mlp.py`, `docs/autodl_automatic_pipeline_setup_2026-04-18.md` | chunked EDMD output MAT files, summary MAT files, checkpoints, manifests |
-| BLP eigenfunction interpretation pipeline | Interpret trained BLP MLP outputs using DR, top windows, and spike alignment. | `scripts/script_run_all_complete_mlp_efun_dr_pipeline.m`, `functions/postprocessing/run_eigenfunction_reduction_pipeline.m`, `functions/postprocessing/run_mlp_top_state_diversity_postprocessing_pipeline.m` | reduced eigenfunction results, state-space plots, top-window figures, spike correlation outputs |
-| BOLD postprocessing pipeline | Interpret trained BOLD MLP outputs using postprocessed eigenfunctions, deconvolution, and timescales. | `scripts/script_postprocess_bold_reskoopnet_results.m`, `functions/postprocessing/postprocess_bold_reskoopnet_results.m` | BOLD post MAT files, deconvolution outputs, timescale figures, activation maps |
-| BLP-BOLD cross-modal coupling pipeline | Quantify lagged coupling between BLP densities/states and BOLD eigenfunction dynamics. | `scripts/script_correlate_bold_efuns_with_densities.m`, `functions/postprocessing/compute_bold_efun_density_cross_correlation.m` | cross-correlation MAT files, peak tables, summary figures |
+| ResKoopNet training/export pipeline | Train MLP ResKoopNet models and export EDMD-style outputs. Treat this as `pipeline 4.1` for BLP and `pipeline 4.2` for BOLD. | `python_scripts/autodl/run_blp_observables_mlp_reskoopnet.ps1`, `python_scripts/local/run_blp_observables_mlp_reskoopnet_local.ps1`, `python_scripts/autodl/run_bold_observables_mlp_reskoopnet.ps1`, `python_scripts/local/run_bold_observables_mlp_reskoopnet_local.ps1` | chunked EDMD output MAT files, summary MAT files, checkpoints, manifests |
+| BLP eigenfunction dimension-reduction pipeline | Reduce trained BLP MLP eigenfunction outputs and derive thresholded density/event summaries from full or reduced coordinates. | `scripts/script_run_one_cfg_blp_eigenfunction_reduction.m`, `scripts/script_run_cfgs_blp_eigenfunction_reduction.m`, `functions/postprocessing/run_eigenfunction_reduction_pipeline.m` | reduced eigenfunction MAT files, thresholded density/event MAT files, state-space plots, DR summaries, peak-by-state tables/figures |
+| BLP eigenfunction postprocessing pipeline | Consume reduced BLP eigenfunction outputs for top-window interpretation, residual-vs-MUA/SPKT cross-correlation, and state-linked readouts. | `scripts/script_run_one_cfg_blp_eigenfunction_postprocessing.m`, `scripts/script_run_cfgs_blp_eigenfunction_postprocessing.m` | top-window figures, residual-vs-MUA cross-correlation tables/figures, residual-vs-SPKT cross-correlation tables/figures, lagged cross-correlation tables/figures |
+| BOLD postprocessing pipeline | Interpret trained BOLD MLP outputs using postprocessed eigenfunctions, deconvolution, timescales, and intrinsic mode maps. | `scripts/script_run_one_cfg_bold_reskoopnet_postprocessing.m`, `scripts/script_postprocess_bold_reskoopnet_results.m` | BOLD post MAT files, deconvolution outputs, timescale figures, intrinsic BOLD mode activation maps |
+| BLP-BOLD cross-modal coupling pipeline | Quantify lagged coupling between BLP densities/states and BOLD eigenfunction dynamics. | `scripts/script_run_one_cfg_bold_cross_modal_coupling.m`, `scripts/script_correlate_bold_efuns_with_densities.m` | cross-correlation MAT files, peak tables, summary figures, xcorr-ranked BOLD activation maps |
 
 ## Pipeline Ownership By Folder
 
@@ -120,8 +122,10 @@ Primary scripts:
 - `scripts/script_build_one_cfg_bold_observables.m`
 - `scripts/script_build_cfgs_bold_observables.m`
 - `scripts/script_build_e10gb1_bold_observables.m`
-- `scripts/script_plot_bold_pre_reskoopnet_qc.m`
-- `scripts/script_plot_bold_svd100_qc.m`
+- `scripts/script_plot_one_cfg_bold_pre_reskoopnet_qc.m`
+- `scripts/script_plot_cfgs_bold_pre_reskoopnet_qc.m`
+- `scripts/script_plot_e10gb1_bold_pre_reskoopnet_qc.m`
+- `scripts/script_report_bold_observable_shapes.m`
 
 Primary preprocessing functions:
 
@@ -137,38 +141,49 @@ Supporting plotting:
 
 ### 4. ResKoopNet training/export pipeline
 
+Read this family as two current branches:
+
+- `pipeline 4.1`: BLP training/export
+- `pipeline 4.2`: BOLD training/export
+
 Primary docs and launchers:
 
 - `docs/autodl_automatic_pipeline_setup_2026-04-18.md`
+- `python_scripts/autodl/run_blp_observables_mlp_reskoopnet.ps1`
+- `python_scripts/local/run_blp_observables_mlp_reskoopnet_local.ps1`
+- `python_scripts/local/run_blp_observables_mlp_reskoopnet_wsl.ps1`
+- `python_scripts/local/run_blp_observables_mlp_reskoopnet_wsl.sh`
+- `python_scripts/autodl/run_bold_observables_mlp_reskoopnet.ps1`
+- `python_scripts/local/run_bold_observables_mlp_reskoopnet_local.ps1`
+- `python_scripts/local/run_bold_observables_mlp_reskoopnet_wsl.ps1`
+- `python_scripts/local/run_bold_observables_mlp_reskoopnet_wsl.sh`
 - `python_scripts/autodl/run_autodl_reskoopnet_mlp.py`
 - `python_scripts/autodl/controller_autodl_reskoopnet_mlp.py`
 - `python_scripts/autodl/batch_controller_autodl_reskoopnet_mlp.py`
 - `python_scripts/autodl/dataset_batch_controller_autodl_reskoopnet_mlp.py`
 - `python_scripts/autodl/multi_dataset_batch_controller_autodl_reskoopnet_mlp.py`
 
-This pipeline consumes outputs from the BLP dictionary pipeline and the BOLD
-observable pipeline, then produces chunked EDMD-like outputs used by the
-downstream postprocessing pipelines.
+This family consumes outputs from the BLP dictionary pipeline (`pipeline 4.1`)
+and the BOLD observable pipeline (`pipeline 4.2`), then produces chunked
+EDMD-like outputs used by the downstream postprocessing pipelines.
 
-### 5. BLP eigenfunction interpretation pipeline
+### 5. BLP eigenfunction dimension-reduction pipeline
 
 Primary scripts:
 
-- `scripts/script_run_all_complete_mlp_efun_dr_pipeline.m`
-- `scripts/script_run_all_complete_mlp_efun_dr_umap_only.m`
-- `scripts/script_run_e10gb1_full_mlp_efun_dr_pipeline.m`
-- `scripts/script_run_e10gb1_eigenfunction_reduction_method_sweep.m`
-- `scripts/script_run_eigenfunction_reduction_minimal.m`
-- `scripts/script_run_completed_mlp_top_state_diversity_postprocessing.m`
-- `scripts/script_run_completed_mlp_added_postprocessing_stages.m`
-- `scripts/script_run_missing_completed_model_postprocessing.m`
-- `scripts/script_compare_e10gb1_spike_residual.m`
-- `scripts/script_plot_e10gb1_spike_residual_correlation.m`
-- `scripts/script_plot_e10gb1_spike_residual_lagged_correlation.m`
+- `scripts/script_run_one_cfg_blp_eigenfunction_reduction.m`
+- `scripts/script_run_cfgs_blp_eigenfunction_reduction.m`
+- `scripts/script_run_e10gb1_blp_eigenfunction_reduction.m`
 - `scripts/script_analyze_e10gb1_efun_peaks_by_state.m`
+- `scripts/script_plot_e10gb1_efun_svd_top30_state_diversity_windows.m`
 
 Primary functions:
 
+- `functions/postprocessing/build_blp_eigenfunction_reduction_params.m`
+- `functions/postprocessing/build_blp_eigenfunction_reduction_method_specs.m`
+- `functions/postprocessing/load_blp_eigenfunction_reduction_source.m`
+- `functions/postprocessing/build_blp_eigenfunction_reduction_cfg.m`
+- `functions/postprocessing/plot_blp_eigenfunction_reduction_outputs.m`
 - `functions/postprocessing/run_eigenfunction_reduction_pipeline.m`
 - `functions/postprocessing/reduce_eigenfunction_time_path.m`
 - `functions/postprocessing/reduce_eigenfunction_spectrum_path.m`
@@ -176,12 +191,8 @@ Primary functions:
 - `functions/postprocessing/get_thresholded_events.m`
 - `functions/postprocessing/get_dimred_thresholded_density.m`
 - `functions/postprocessing/get_dimred_thresholded_events.m`
-- `functions/postprocessing/run_mlp_top_state_diversity_postprocessing_pipeline.m`
-- `functions/postprocessing/run_reskoopnet_eigenfunction_density_batch.m`
-- `functions/postprocessing/compute_spike_residual_comparison.m`
-- `functions/postprocessing/compute_spike_residual_lagged_correlation.m`
-- `functions/postprocessing/analyze_eigenfunction_component_peaks_by_consensus_state.m`
 - `functions/postprocessing/fit_empirical_eigenvalues_from_efuns.m`
+- `functions/postprocessing/analyze_eigenfunction_component_peaks_by_consensus_state.m`
 
 Supporting plotting:
 
@@ -191,33 +202,84 @@ Supporting plotting:
 - `functions/plottings/plot_eigenfunction_state_space_consensus_trajectory.m`
 - `functions/plottings/plot_acf_and_theoretical.m`
 
-### 6. BOLD postprocessing pipeline
+### 6. BLP eigenfunction postprocessing pipeline
 
 Primary scripts:
 
-- `scripts/script_postprocess_bold_reskoopnet_results.m`
-- `scripts/script_generate_missing_bold_activation_maps.m`
-- `scripts/script_run_one_bold_reskoopnet_post_xcorr_activation_maps.m`
-- `scripts/plot_bold_reskoopnet_mode_activation_map.m`
-- `scripts/plot_bold_reskoopnet_mode_activation_map_reference_style.m`
+- `scripts/script_run_one_cfg_blp_eigenfunction_postprocessing.m`
+- `scripts/script_run_cfgs_blp_eigenfunction_postprocessing.m`
+- `scripts/script_run_e10gb1_blp_eigenfunction_postprocessing.m`
+- `scripts/script_run_completed_mlp_top_state_diversity_postprocessing.m`
+- `scripts/script_run_completed_mlp_added_postprocessing_stages.m`
+- `scripts/script_run_missing_completed_model_postprocessing.m`
+- `scripts/script_compare_e10gb1_mua_residual_cross_correlation.m`
+- `scripts/script_plot_e10gb1_mua_residual_cross_correlation.m`
+- `scripts/script_compare_e10gb1_spkt_residual_cross_correlation.m`
+- `scripts/script_plot_e10gb1_spkt_residual_cross_correlation.m`
+- `scripts/script_plot_e10gb1_spkt_residual_lagged_cross_correlation.m`
 
 Primary functions:
 
+- `functions/postprocessing/compute_mua_residual_cross_correlation.m`
+- `functions/postprocessing/compute_spkt_residual_cross_correlation.m`
+- `functions/postprocessing/compute_spkt_residual_lagged_cross_correlation.m`
+
+Supporting plotting:
+
+- `functions/plottings/plot_eigenfunction_state_space_consensus_trajectory.m`
+- `functions/plottings/plot_acf_and_theoretical.m`
+
+Main outputs in practice:
+
+- top-window postprocessing figures (`main`, `timescale`, `deconv`, `deconv_localwin_norm`)
+- residual-vs-MUA comparison MAT/CSV outputs and overview figures
+- residual-vs-SPKT comparison MAT/CSV outputs and overview figures
+- SPKT-residual lagged cross-correlation MAT/CSV outputs and summary figures
+
+Combined manifests still exist in some runners, but they should be treated as
+bookkeeping rather than the primary scientific outputs of this pipeline.
+
+### 7. BOLD postprocessing pipeline
+
+Primary scripts:
+
+- `scripts/script_run_one_cfg_bold_reskoopnet_postprocessing.m`
+- `scripts/script_postprocess_bold_reskoopnet_results.m`
+
+Primary functions:
+
+- `functions/postprocessing/build_bold_reskoopnet_postprocessing_params.m`
+- `functions/postprocessing/discover_completed_bold_reskoopnet_runs.m`
+- `functions/postprocessing/prepare_bold_reskoopnet_postprocessing_run.m`
+- `functions/postprocessing/run_bold_reskoopnet_postprocessing_stages.m`
 - `functions/postprocessing/postprocess_bold_reskoopnet_results.m`
+- `functions/postprocessing/export_bold_intrinsic_activation_maps.m`
+- `functions/postprocessing/build_bold_activation_plot_context.m`
+- `functions/postprocessing/plot_bold_activation_map_reference_style.m`
 - `functions/postprocessing/postprocess_EDMD_outputs.m`
 - `functions/postprocessing/postprocess_EDMD_outputs_deconv_efuns.m`
 - `functions/postprocessing/postprocess_EDMD_outputs_timescale.m`
 
-### 7. BLP-BOLD cross-modal coupling pipeline
+Convenience wrappers:
+
+- `scripts/script_run_one_bold_reskoopnet_postprocess.m`
+- `functions/postprocessing/run_one_bold_reskoopnet_postprocessing_core.m`
+
+### 8. BLP-BOLD cross-modal coupling pipeline
 
 Primary scripts:
 
+- `scripts/script_run_one_cfg_bold_cross_modal_coupling.m`
 - `scripts/script_correlate_bold_efuns_with_densities.m`
-- `scripts/script_run_one_bold_reskoopnet_post_xcorr_activation_maps.m`
 
 Primary functions:
 
+- `functions/postprocessing/build_bold_cross_modal_coupling_params.m`
+- `functions/postprocessing/discover_completed_bold_cross_modal_coupling_runs.m`
+- `functions/postprocessing/process_bold_cross_modal_coupling_runs.m`
+- `functions/postprocessing/run_one_bold_cross_modal_coupling_core.m`
 - `functions/postprocessing/compute_bold_efun_density_cross_correlation.m`
+- `functions/postprocessing/export_bold_top_xcorr_activation_maps.m`
 - `functions/plottings/plot_bold_efun_density_cross_correlation_summary.m`
 
 Inputs usually come from:
@@ -225,9 +287,15 @@ Inputs usually come from:
 - BLP event-state pipeline outputs such as event density or state diversity
 - BOLD postprocessing pipeline outputs such as `BOLD_POST` MAT files
 
-The single-run script
-`script_run_one_bold_reskoopnet_post_xcorr_activation_maps.m` spans both the
-BOLD postprocessing pipeline and the cross-modal coupling pipeline.
+Compatibility wrappers still exist for the previous mixed entry points:
+
+- `scripts/script_run_one_bold_cross_modal_coupling.m`
+- `scripts/script_run_one_bold_reskoopnet_post_xcorr_activation_maps.m`
+- `scripts/script_generate_missing_bold_activation_maps.m`
+
+These wrappers now delegate to the separated pipeline 7 and pipeline 8
+implementations, but they should not be treated as canonical pipeline-owned
+entry points.
 
 ### Optional BLP CNN comparison branch
 
@@ -255,10 +323,11 @@ This should be done before deciding which folder the file belongs to.
 ## Immediate Implication For Postprocessing
 
 `functions/postprocessing` is not one coherent pipeline. It currently mixes at
-least four different downstream lines:
+least five different downstream lines:
 
 - BLP event-state downstream
-- BLP eigenfunction interpretation
+- BLP eigenfunction dimension reduction
+- BLP eigenfunction postprocessing
 - BOLD postprocessing
 - BLP-BOLD cross-modal coupling
 

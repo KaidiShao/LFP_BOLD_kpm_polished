@@ -3,8 +3,8 @@ set -euo pipefail
 
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-bold_wsl_20260423}"
 LOCAL_OUTPUT_ROOT_BASE="${LOCAL_OUTPUT_ROOT_BASE:-/mnt/e/autodl_results_local/bold_wsl}"
-OBSERVABLE_MODES="${OBSERVABLE_MODES:-eleHP HP roi_mean slow_band_power svd HP_svd100 global_svd100}"
-RESIDUAL_FORMS="${RESIDUAL_FORMS:-projected_kv projected_vlambda}"
+OBSERVABLE_MODES="${OBSERVABLE_MODES:-eleHP HP roi_mean roi_mean_slow_band_power slow_band_power slow_band_power_svd svd HP_svd100 global_svd100 gsvd100_ds global_slow_band_power_svd100}"
+RESIDUAL_FORMS="${RESIDUAL_FORMS:-projected_vlambda}"
 START_WITH_DATASET="${START_WITH_DATASET:-e10gb1}"
 ONLY_START_DATASET="${ONLY_START_DATASET:-0}"
 RESUME="${RESUME:-0}"
@@ -12,6 +12,7 @@ FORCE_RERUN="${FORCE_RERUN:-0}"
 CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-0}"
 EXPORT_PSI="${EXPORT_PSI:-0}"
 SELECTED_DEVICE="${SELECTED_DEVICE:-gpu}"
+SOLVER_NAME="${SOLVER_NAME:-resdmd_batch}"
 EPOCHS="${EPOCHS:-30}"
 BATCH_SIZE="${BATCH_SIZE:-2000}"
 CHUNK_SIZE="${CHUNK_SIZE:-5000}"
@@ -19,6 +20,10 @@ N_PSI_TRAIN="${N_PSI_TRAIN:-100}"
 TRAIN_RATIO="${TRAIN_RATIO:-0.7}"
 REG="${REG:-0.1}"
 LR="${LR:-1e-4}"
+INNER_EPOCHS="${INNER_EPOCHS:-5}"
+SEED="${SEED:-100}"
+TRAIN_SHUFFLE="${TRAIN_SHUFFLE:-0}"
+SPECTRAL_SYNC_MODE="${SPECTRAL_SYNC_MODE:-dual}"
 LAYER_SIZES="${LAYER_SIZES:-100 100 100}"
 PYTHON_EXE="${PYTHON_EXE:-python3}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -37,15 +42,16 @@ export TF_NUM_INTEROP_THREADS="${TF_NUM_INTEROP_THREADS:-$TF_INTEROP_THREADS}"
 REPO_ROOT="/mnt/d/Onedrive/ICPBR/Alberta/koopman_events/LFP_BOLD_kpm_polished"
 RUNNER="${REPO_ROOT}/python_scripts/autodl/run_autodl_reskoopnet_mlp.py"
 SOLVER_DIR="${REPO_ROOT}/python_scripts/autodl"
-BOLD_ROOT="/mnt/e/DataPons_processed/bold_observables"
+BOLD_ROOT="/mnt/e/DataPons_processed"
 
-dataset_stems=(e10gb1 e10gh1 e10fV1 f12m01)
-dataset_ids=("E10.gb1" "E10.gH1" "E10.fV1" "F12.m01")
+dataset_stems=(e10gb1 e10gh1 e10fV1 f12m01 e10gw1)
+dataset_ids=("E10.gb1" "E10.gH1" "E10.fV1" "F12.m01" "E10.gW1")
 
 observable_file() {
-  local dataset_id="$1"
-  local mode="$2"
-  printf '%s/%s/%s_bold_observables_%s.mat' "$BOLD_ROOT" "$dataset_id" "$dataset_id" "$mode"
+  local dataset_stem="$1"
+  local dataset_id="$2"
+  local mode="$3"
+  printf '%s/%s/pipeline3_bold_observables/%s_bold_observables_%s.mat' "$BOLD_ROOT" "$dataset_stem" "$dataset_id" "$mode"
 }
 
 run_label() {
@@ -150,9 +156,10 @@ wait_for_all_parallel_jobs() {
 }
 
 for idx in "${ordered_indices[@]}"; do
+  dataset_stem="${dataset_stems[$idx]}"
   dataset_id="${dataset_ids[$idx]}"
   for mode in "${mode_array[@]}"; do
-    file="$(observable_file "$dataset_id" "$mode")"
+    file="$(observable_file "$dataset_stem" "$dataset_id" "$mode")"
     if [[ ! -f "$file" ]]; then
       echo "Missing BOLD observable file for ${dataset_id} / ${mode}: ${file}" >&2
       exit 1
@@ -184,23 +191,23 @@ for idx in "${ordered_indices[@]}"; do
         continue
       fi
 
-      data_file="$(observable_file "$dataset_id" "$mode")"
+      data_file="$(observable_file "$dataset_stem" "$dataset_id" "$mode")"
       console_log="${console_log_parent}/${label}.log"
 
       cmd=(
         "$PYTHON_EXE" "$RUNNER"
         "--project-root" "$REPO_ROOT"
         "--solver-dir" "$SOLVER_DIR"
-        "--data-root" "$BOLD_ROOT"
+        "--data-root" "${BOLD_ROOT}/${dataset_stem}"
         "--output-parent" "$output_parent"
         "--checkpoint-parent" "$checkpoint_parent"
         "--log-parent" "$log_parent"
         "--run-name-base" "mlp_obs"
         "--experiment-name" "$dataset_experiment_name"
         "--selected-device" "$SELECTED_DEVICE"
-        "--solver-name" "resdmd_batch"
+        "--solver-name" "$SOLVER_NAME"
         "--residual-form" "$residual_form"
-        "--data-subdir" "$dataset_id"
+        "--data-subdir" "pipeline3_bold_observables"
         "--dataset-stem" "$dataset_stem"
         "--observable-mode" "$mode"
         "--data-filename" "$(basename "$data_file")"
@@ -215,8 +222,10 @@ for idx in "${ordered_indices[@]}"; do
         "--lr" "$LR"
         "--log-interval" "1"
         "--lr-decay-factor" "0.8"
-        "--inner-epochs" "5"
+        "--inner-epochs" "$INNER_EPOCHS"
         "--end-condition" "1e-9"
+        "--seed" "$SEED"
+        "--spectral-sync-mode" "$SPECTRAL_SYNC_MODE"
         "--chunk-size" "$CHUNK_SIZE"
         "--layer-sizes" "${layer_array[@]}"
       )
@@ -225,6 +234,9 @@ for idx in "${ordered_indices[@]}"; do
         cmd+=("--resume")
       else
         cmd+=("--fresh-checkpoints")
+      fi
+      if [[ "$TRAIN_SHUFFLE" == "1" ]]; then
+        cmd+=("--train-shuffle")
       fi
       if [[ "$EXPORT_PSI" == "1" ]]; then
         cmd+=("--export-psi")
@@ -236,6 +248,9 @@ for idx in "${ordered_indices[@]}"; do
       echo "Starting WSL BOLD MLP ResKoopNet: $label"
       echo "Data file: $data_file"
       echo "Console log: $console_log"
+      echo "Solver: $SOLVER_NAME"
+      echo "Seed: $SEED"
+      echo "Training schedule: shuffle=${TRAIN_SHUFFLE}, spectral_sync_mode=${SPECTRAL_SYNC_MODE}, inner_epochs=${INNER_EPOCHS}"
       printf '=%.0s' {1..80}
       echo
 

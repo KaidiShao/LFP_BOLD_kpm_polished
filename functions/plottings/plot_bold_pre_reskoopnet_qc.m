@@ -4,7 +4,7 @@ function [figs, info] = plot_bold_pre_reskoopnet_qc(input_data, params)
 %   [figs, info] = plot_bold_pre_reskoopnet_qc(input_data, params)
 %
 %   input_data can be:
-%     1) a BOLD observable MAT file saved by script_batch_build_bold_observables.m
+%     1) a BOLD observable MAT file saved by script_build_one_cfg_bold_observables.m
 %     2) a struct with top-level observable fields such as obs, session_lengths
 %     3) a standardized observable struct O with O.data and session metadata
 %

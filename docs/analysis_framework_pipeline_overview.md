@@ -62,7 +62,7 @@ flowchart LR
             direction TB
             BLP_TOP["Top state-diversity windows"]
             BLP_DR["Eigenfunction dimension reduction<br/>no UMAP branch"]
-            BLP_SPIKE["Spike-residual correlation"]
+BLP_SPIKE["SPKT-residual cross-correlation"]
         end
 
         subgraph BOLD_POST["BOLD postprocessing"]
@@ -70,13 +70,14 @@ flowchart LR
             BOLD_EFUN["BOLD eigenfunction postprocessing"]
             BOLD_DECONV["Deconvolved eigenfunctions"]
             BOLD_TS["Timescale diagnostics"]
-            BOLD_ACT["Mode activation maps"]
+            BOLD_ACT["Intrinsic BOLD mode maps"]
         end
 
         subgraph XMODAL["BLP-BOLD coupling"]
             direction TB
             XCORR["Lagged cross-correlation<br/>BOLD eigenfunctions/deconv<br/>vs BLP density signals"]
             LAG["Lag interpretation<br/>positive lag = BLP density leads BOLD"]
+            XACT["XCORR-ranked BOLD mode maps"]
         end
     end
 
@@ -96,6 +97,7 @@ flowchart LR
     BOLD_DECONV --> XCORR
     BOLD_EFUN --> XCORR
     XCORR --> LAG
+    XCORR --> XACT
 
     subgraph QUESTIONS["Scientific readouts"]
         direction TB
@@ -109,6 +111,7 @@ flowchart LR
     BLP_TOP --> Q1
     BLP_SPIKE --> Q2
     BOLD_ACT --> Q3
+    XACT --> Q3
     LAG --> Q4
     BLP_DR --> Q5
     BOLD_TS --> Q5
@@ -122,8 +125,8 @@ Use this if the full diagram is too dense for one slide.
 flowchart LR
     A["Raw data<br/>BLP + BOLD"] --> B["Preprocessing<br/>BLP spectrograms, events, states<br/>BOLD observables and QC"]
     B --> C["ResKoopNet<br/>BLP MLP/CNN conditions<br/>BOLD MLP conditions"]
-    C --> D["Within-modality interpretation<br/>BLP top windows, DR, spike corr<br/>BOLD postprocess, deconv, activation maps"]
-    D --> E["Cross-modal analysis<br/>BOLD eigenfunctions vs BLP densities<br/>session-aware lagged correlation"]
+    C --> D["Within-modality interpretation<br/>BLP top windows, DR, spike corr<br/>BOLD postprocess, deconv, intrinsic mode maps"]
+    D --> E["Cross-modal analysis<br/>BOLD eigenfunctions vs BLP densities<br/>session-aware lagged correlation + top xcorr mode maps"]
     E --> F["Scientific decisions<br/>primary condition, robustness checks,<br/>biological interpretation"]
 ```
 
@@ -138,7 +141,7 @@ choice, not as a brute-force list.
 | BLP observable | abs, complex_split | abs focuses on power magnitude. complex_split keeps real and imaginary spectrogram information. |
 | Residual form | projected_kv, projected_vlambda | Two residual definitions for Koopman-consistent reconstruction and dynamics. |
 | BOLD observable | roi_mean, eleHP, HP, svd, HP_svd100, global_svd100, slow_band_power | Tests spatial scale, targeted regions, and dimensionality reduction choices. |
-| Postprocessing target | state diversity, eigenfunction DR, spike correlation, BOLD activation, BLP-BOLD correlation | Tests whether learned dynamics map onto state structure, spiking, spatial BOLD maps, and cross-modal lagged coupling. |
+| Postprocessing target | state diversity, eigenfunction DR, SPKT cross-correlation, BOLD activation, BLP-BOLD correlation | Tests whether learned dynamics map onto state structure, spiking, spatial BOLD maps, and cross-modal lagged coupling. |
 
 ## Suggested Figure Set For The Discussion
 
@@ -151,7 +154,7 @@ than every condition.
 | Condition matrix | Explain why each condition exists and which are primary vs robustness branches. |
 | BLP top state-diversity window | Show how Koopman dynamics align with interpretable BLP state structure. |
 | Eigenfunction DR/state-space plot | Show whether states separate in learned coordinates. |
-| Spike-residual correlation heatmap or top-bar plot | Show whether residual dynamics relate to spiking. |
+| SPKT-residual cross-correlation heatmap or top-bar plot | Show whether residual dynamics relate to spiking. |
 | BOLD activation map | Show whether BOLD Koopman modes have spatial interpretation. |
 | BLP-BOLD lagged cross-correlation plot | Show directionality and timing of cross-modal coupling. |
 

@@ -1,7 +1,16 @@
-# Local AutoDL Copy For E10.gb1
+# LEGACY Local AutoDL Copy For E10.gb1
 
-This folder is a local WSL-ready copy of the original `python_scripts/autodl` workflow.
-It keeps the original cloud-facing AutoDL files untouched and rewires the main paths for `E10.gb1`.
+This folder is a legacy local WSL-ready copy of the older
+`python_scripts/autodl` workflow.
+
+It is kept only for archived local complex-split experiments and historical
+reproducibility. It is not the canonical pipeline 4 entry anymore.
+
+Prefer these canonical launchers instead:
+
+- `python_scripts/autodl/run_bold_observables_mlp_reskoopnet.ps1`
+- `python_scripts/local/run_bold_observables_mlp_reskoopnet_local.ps1`
+- `python_scripts/local/run_bold_observables_mlp_reskoopnet_wsl.sh`
 
 ## Default paths
 
@@ -12,7 +21,7 @@ It keeps the original cloud-facing AutoDL files untouched and rewires the main p
 - Results root:
   `/mnt/e/autodl_results/e10gb1/mlp`
 
-## Main entry
+## Legacy entry points
 
 Open this notebook in WSL/Jupyter:
 
