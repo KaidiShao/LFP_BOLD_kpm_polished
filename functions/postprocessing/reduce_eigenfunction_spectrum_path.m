@@ -8,7 +8,8 @@ if T < 2 || N < 2
     error('F_time_by_mode must be T x N with T >= 2 and N >= 2.');
 end
 
-D = local_compute_mode_distance(F_time_by_mode, cfg.distance);
+[D, distance_info] = local_compute_mode_distance( ...
+    F_time_by_mode, cfg.distance, cfg.downsample_step);
 Z = local_embed_modes(F_time_by_mode, D, cfg);
 [A, labels, embedding_info] = local_cluster_embedding(Z, cfg);
 
@@ -22,7 +23,15 @@ end
 P = local_normalize_assignment_columns(A);
 C = F_aligned * P;
 W_recon = local_solve_reconstruction_weights(C, F_aligned, cfg.reconstruction_weight_method);
-Fhat = C * W_recon.';
+if cfg.store_reconstruction
+    Fhat = C * W_recon.';
+    reconstruction_error_fro = norm(F_aligned - Fhat, 'fro');
+    assignment_reconstruction_error_fro = norm(F_aligned - C * P.', 'fro');
+else
+    Fhat = [];
+    reconstruction_error_fro = NaN;
+    assignment_reconstruction_error_fro = NaN;
+end
 
 core = struct();
 core.n_components = size(C, 2);
@@ -36,13 +45,16 @@ core.weight_semantics = 'reconstruction_weight';
 
 quality = struct();
 quality.explained_variance_ratio = [];
-quality.reconstruction_error_fro = norm(F_aligned - Fhat, 'fro');
+quality.reconstruction_error_fro = reconstruction_error_fro;
 quality.reconstruction_error_domain = 'feature';
-quality.assignment_reconstruction_error_fro = norm(F_aligned - C * P.', 'fro');
+quality.assignment_reconstruction_error_fro = assignment_reconstruction_error_fro;
+quality.reconstruction_stored = logical(cfg.store_reconstruction);
 
 aux = struct();
 aux.spectrum = struct();
 aux.spectrum.distance_name = cfg.distance;
+aux.spectrum.distance_sample_step = distance_info.sample_step;
+aux.spectrum.distance_n_time_samples = distance_info.n_time_samples;
 aux.spectrum.distance_mode_by_mode = D;
 aux.spectrum.embedding_method = cfg.method;
 aux.spectrum.embedding_mode_by_dim = Z;
@@ -120,13 +132,24 @@ end
 if ~isfield(cfg, 'reconstruction_weight_method') || isempty(cfg.reconstruction_weight_method)
     cfg.reconstruction_weight_method = 'least_squares';
 end
+
+if ~isfield(cfg, 'store_reconstruction') || isempty(cfg.store_reconstruction)
+    cfg.store_reconstruction = false;
+end
 end
 
 
-function D = local_compute_mode_distance(F, distance_name)
+function [D, info] = local_compute_mode_distance(F, distance_name, downsample_step)
+step = max(1, round(double(downsample_step)));
+F_sample = F(1:step:end, :);
+
+info = struct();
+info.sample_step = step;
+info.n_time_samples = size(F_sample, 1);
+
 switch lower(distance_name)
     case 'corr_abs'
-        C = corr(F);
+        C = corr(F_sample);
         C(~isfinite(C)) = 0;
         D = 1 - abs(C);
         D(1:size(D, 1)+1:end) = 0;
@@ -144,10 +167,22 @@ output_dim = max(output_dim, 1);
 switch lower(cfg.method)
     case 'mds'
         opts = statset('MaxIter', cfg.mds_max_iter);
-        Z = mdscale(D, output_dim, ...
-            'Criterion', 'stress', ...
-            'Start', 'random', ...
-            'Options', opts);
+        try
+            Z = mdscale(D, output_dim, ...
+                'Criterion', 'stress', ...
+                'Start', 'random', ...
+                'Options', opts);
+        catch ME
+            warning(['mdscale failed (%s). Falling back to classical ', ...
+                'MDS via cmdscale.'], ME.message);
+            [Y, ~] = cmdscale(D, output_dim);
+            if isempty(Y)
+                rethrow(ME);
+            end
+            Z = zeros(size(D, 1), output_dim);
+            n_dim = min(output_dim, size(Y, 2));
+            Z(:, 1:n_dim) = Y(:, 1:n_dim);
+        end
 
     case 'diffusion_map'
         epsilon = median(D(:));

@@ -1,0 +1,186 @@
+Current Pipeline Inventory Minimal Upload Version
+Updated 2026-05-20
+
+Purpose
+
+This is a short plain-text description of the current analysis pipeline. It is
+intended as background context for discussing analysis design. It avoids
+Markdown tables and code blocks so it can be pasted or uploaded more easily.
+
+Current scope
+
+Current downstream datasets are e10gb1, e10fV1, e10gh1, and f12m01. e10gW1 is
+not included in the current P7 to P10 downstream analysis because its BOLD P4
+training is still being resolved.
+
+Current downstream BOLD observables are global_svd100, gsvd100_ds, HP_svd100,
+and roi_mean. Other BOLD observable options exist historically, but they are
+not the current minimal mainline unless explicitly re-enabled.
+
+The main processed-data root is E drive DataPons_processed under each dataset.
+The P11 summary root is the pipeline11_current_analysis_summary folder under
+E drive DataPons_processed summary_figures. Dataset-local pipeline folders are
+the source of truth. Summary_figures folders are browsing or summary caches and
+should not be used to decide whether a scientific result exists.
+
+P1. BLP spectrogram and dictionary
+
+P1 converts raw BLP or LFP into region spectrogram features and ResKoopNet
+dictionary inputs. Its main outputs are spectrogram MAT files and dictionary
+MAT files. P1 figures are input QC, such as raw BLP and spectrogram checks.
+
+P2. BLP events, density, and consensus states
+
+P2 detects band or event-like BLP events, builds event density, builds
+consensus states, and identifies diversity windows. These outputs support
+later event-density and state-based analyses. Event-diversity and window
+products are useful but should be treated as minor for current completeness
+checks unless explicitly needed.
+
+P3. BOLD observables
+
+P3 converts BOLD ROI time series into standardized observable packages for BOLD
+ResKoopNet. The current downstream observable set has four modes:
+global_svd100, gsvd100_ds, HP_svd100, and roi_mean. P3 also creates
+pre-ResKoopNet QC figures. P11 should flatten current P3 QC figures, but old
+copied QC folders should not be used as completeness proof.
+
+P4. ResKoopNet training and export
+
+P4 trains BLP and BOLD ResKoopNet or MLP models and exports EDMD-like outputs.
+P4 outputs may live outside the dataset-local processed pipeline folders.
+Downstream BOLD pipelines must resolve the current best BOLD checkpoint first.
+For each dataset and observable, the current best checkpoint should be chosen
+by validation metric, not by newest folder timestamp. P7 is a deterministic
+postprocessing snapshot of that chosen checkpoint. If P4 best checkpoint
+changes, P7 through P10 should be re-audited or regenerated.
+
+P5. BLP eigenfunction reduction
+
+P5 reduces learned BLP eigenfunctions and components. It also builds
+thresholded density sources used by P8 and P10, and analyzes component activity
+around consensus states or events. The current main grid is condition abs and
+csplit, method SVD NMF MDS UMAP, and k from 03 to 08.
+
+Important P5 outputs include eigenfunction reduction results, raw thresholded
+density, dimred thresholded density, and peak-by-state results. Current desired
+trajectory visualization is scatter style. Old line or surface trajectory
+figures should be treated as historical unless intentionally regenerated.
+P5 summary figure folders are caches, not canonical sources.
+
+P6. BLP top-window postprocessing
+
+P6 postprocesses top state-diversity windows from BLP ResKoopNet outputs. It
+also produces run-level timescale diagnostics and residual channel comparisons
+with SPKT and MUA. Current P11 flat views should include timescale diagnostics,
+SPKT residual cross-correlation overview, MUA residual cross-correlation
+overview, and top-window EDMD postprocess paired with window-normalized deconv.
+The old window_figures folder should be treated as a copied cache, not
+canonical.
+
+P7. BOLD ResKoopNet postprocessing
+
+P7 converts current best BOLD ResKoopNet checkpoints into BOLD_POST artifacts.
+It produces BOLD eigenfunction summaries, deconvolved eigenfunctions,
+timescales, ROI summaries, and activation maps. P7 must be selected from the
+current P4 best checkpoint. P11 should not decide the mainline P7 run by simply
+scanning existing P7 folders. Old P7 folders from non-best checkpoints are
+legacy or stale for current completeness.
+
+P8. BOLD eigenfunction versus LFP density cross-correlation
+
+P8 asks whether BOLD eigenfunction or deconvolved eigenfunction streams are
+stably coupled to LFP or BLP density sources across sessions. The canonical
+numeric output is pipeline8_xcorr under each dataset and run tag. Optional
+spatial or browse output is pipeline8_top_maps.
+
+The current P8 density source grid contains event density, raw abs density,
+raw csplit density, and dimred abs or csplit densities from SVD NMF MDS UMAP
+for k03 to k08. This gives 51 density sources total: one event density, two raw
+densities, and 48 dimred densities.
+
+P8 first-stage analysis should not start from activation maps or ROI maps. It
+should focus on four numeric consistency checks. First, strength consistency:
+dataset by 51 density source, split by all, efun, and deconv_efun. Second,
+method by k consistency: dimred only, split by abs or csplit and efun or
+deconv_efun. Third, preference consistency: per-session winner for all-density,
+dimred-only, abs-only, and csplit-only scopes. Fourth, lag consistency: median
+lag and lag-sign agreement.
+
+The current P8 main ranking table is p8_main_consistency_ranking in the
+pipeline8_cross_session_consistency_current results folder. Current first-stage
+P8 figures are under the P11 p8 cross_session_consistency folder, split into
+strength, method_k, preference, and lag subfolders.
+
+P9. BOLD eigenfunction reduction
+
+P9 applies a P5-like dimension reduction to BOLD eigenfunction or deconvolved
+eigenfunction streams. It creates BOLD component time series and component
+spatial loadings for P10. The current main feature is efun_real. The current
+method and k grid is SVD NMF MDS UMAP for k03 to k08. P9 must trace back to
+current P7 BOLD_POST provenance.
+
+P10. P9 BOLD components versus LFP density cross-correlation
+
+P10 compares reduced BOLD components from P9 with the same LFP density source
+grid used by P8. The current grid uses run tags pv_gsvd100, pv_gsvd100_ds,
+pv_hp100, and pv_roi; P9 feature efun_real; P9 method and k from SVD NMF MDS
+UMAP with k03 to k08; and the same 51 LFP density sources used by P8.
+
+P10 inherits the P7 to P9 provenance chain. Existing P10 figure or cache
+folders should not be used as completeness proof. Like P8, P10 should first be
+analyzed by numeric consistency before drawing activation or ROI maps.
+
+P11. Current analysis organizer
+
+P11 is not a new scientific low-level pipeline. It is an organizer that audits
+current outputs, flattens current figures into one browsing folder, regenerates
+derived summaries, and keeps historical outputs out of the current view unless
+explicitly requested. P11 should run headless by default, should not pop up
+MATLAB figures during backfill, should not delete legacy files automatically,
+and should decide completeness from canonical pipeline folders rather than
+summary figure caches.
+
+Current first-stage analysis philosophy
+
+For deciding what to trust first, the project should not start from activation
+maps or ROI maps. The recommended order is:
+
+1. Confirm data completeness and current-best provenance.
+2. Compare numeric cross-session strength.
+3. Check method and k stability.
+4. Check winner or preference consistency.
+5. Check lag sign and lag range.
+6. Inspect ROI maps and activation maps only for a small candidate set.
+
+Known confusing or legacy areas
+
+Historical folders still exist and should not be deleted until checked. They
+should not define the current result. Examples include old P5 trajectory styles,
+P5 summary figure caches, P6 window_figures cache, old P8 folders under some
+datasets, old P10 summary or cache folders, and non-P11 summary_figures folders
+for pipeline8 or pipeline10.
+
+Minimal information needed for a new analysis design
+
+Before generating more figures, define the analysis contract:
+
+Selection target: for example P5 method, P8 density source, P10 BOLD dimred
+method, or observable.
+
+Ranking unit: for example observable by feature_family by condition by method
+by k.
+
+Inclusion or exclusion: whether raw density is allowed, whether event_density
+is allowed, whether HP_svd100 is included, and whether efun or deconv_efun are
+included.
+
+Success criteria: n_datasets equals 4 out of 4, high mean score, low standard
+deviation or range, winner method and k agreement, lag sign agreement, and
+possibly ROI profile consistency.
+
+Output size: for example one ranking table, three figures, or per-dataset
+panels.
+
+Without this contract, the project naturally produces too many plausible but
+hard-to-interpret summary figures.

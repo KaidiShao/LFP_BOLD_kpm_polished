@@ -60,6 +60,7 @@ if exist(othercolor_root, 'dir') == 7
 end
 
 close all force;
+set(groot, 'defaultFigureVisible', 'off');
 
 %% -------------------------
 %  User options

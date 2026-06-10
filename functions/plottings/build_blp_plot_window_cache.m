@@ -26,6 +26,7 @@ t2 = double(time_range_sec(2));
     local_slice_spectrogram_window(plot_data, raw_idx, t_seg, freq_lim);
 [n_channels, x_disp, offsets, ytick_pos, ytick_labels] = ...
     local_build_trace_layout(plot_data, D, x_seg);
+[trace_y_min, trace_y_max] = local_get_trace_y_limits(x_disp, offsets, ytick_pos);
 [show_consensus, consensus_windows, consensus_state_catalog, consensus_colors, consensus_face_alpha] = ...
     local_collect_consensus_windows(plot_data, idx_plot_1, idx_plot_2);
 plot_settings = plot_data.plot_settings;
@@ -68,6 +69,8 @@ base_plot_cache.x_disp = x_disp;
 base_plot_cache.offsets = offsets;
 base_plot_cache.ytick_pos = ytick_pos;
 base_plot_cache.ytick_labels = ytick_labels;
+base_plot_cache.trace_y_min = trace_y_min;
+base_plot_cache.trace_y_max = trace_y_max;
 base_plot_cache.border_t_raw = border_t_raw;
 end
 
@@ -139,7 +142,6 @@ for c = 1:n_channels
     end
 
     xc = xc / s;
-    xc = max(min(xc, plot_settings.trace_clip), -plot_settings.trace_clip);
     x_disp(:, c) = plot_settings.trace_scale * xc;
 end
 
@@ -164,6 +166,20 @@ end
 
 [ytick_pos, tick_order] = sort(offsets, 'ascend');
 ytick_labels = channel_labels(tick_order);
+end
+
+
+function [trace_y_min, trace_y_max] = local_get_trace_y_limits(x_disp, offsets, ytick_pos)
+y_all = x_disp + offsets;
+finite_y = y_all(isfinite(y_all));
+if isempty(finite_y)
+    trace_y_min = ytick_pos(1) - 1;
+    trace_y_max = ytick_pos(end) + 1;
+    return;
+end
+pad = 0.08 * max(eps, max(finite_y) - min(finite_y));
+trace_y_min = min([finite_y(:); ytick_pos(:)]) - pad;
+trace_y_max = max([finite_y(:); ytick_pos(:)]) + pad;
 end
 
 

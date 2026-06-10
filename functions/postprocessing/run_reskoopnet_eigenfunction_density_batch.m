@@ -397,6 +397,11 @@ if params.deduplicate_conditions
     runs = local_deduplicate_runs_by_condition(runs);
 end
 
+runs = filter_invalid_blp_mlp_runs(runs, params);
+if isempty(runs)
+    return;
+end
+
 [~, order] = sort(string({runs.dataset}) + "|" + ...
     string({runs.observable_mode}) + "|" + ...
     string({runs.residual_form}) + "|" + string({runs.run_name}));

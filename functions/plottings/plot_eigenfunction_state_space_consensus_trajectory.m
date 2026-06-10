@@ -55,8 +55,8 @@ fig = figure( ...
 ax = axes(fig);
 hold(ax, 'on');
 
-local_print(plot_cfg, '[consensus-state-space] Drawing trajectory surface...\n');
-trajectory_surface = local_plot_consensus_surface(ax, x, y, z, ...
+local_print(plot_cfg, '[consensus-state-space] Drawing %s trajectory...\n', plot_cfg.render_mode);
+trajectory_graphic = local_plot_consensus_trajectory(ax, x, y, z, ...
     state_code_plot, plot_cfg);
 
 if plot_cfg.show_state_number_labels
@@ -96,8 +96,8 @@ plot_info.code_ticks = code_ticks(:);
 plot_info.code_tick_labels = code_labels(:);
 plot_info.component_source = source_name;
 plot_info.source_consensus_file = source_consensus_file;
-plot_info.graphics_mode = 'single_surface';
-plot_info.trajectory_surface = trajectory_surface;
+plot_info.graphics_mode = plot_cfg.render_mode;
+plot_info.trajectory_graphic = trajectory_graphic;
 plot_info.save_path = '';
 
 if plot_cfg.save_figure
@@ -236,6 +236,22 @@ end
 
 if ~isfield(plot_cfg, 'patch_line_width') || isempty(plot_cfg.patch_line_width)
     plot_cfg.patch_line_width = 1.15;
+end
+
+if ~isfield(plot_cfg, 'render_mode') || isempty(plot_cfg.render_mode)
+    plot_cfg.render_mode = 'scatter';
+end
+plot_cfg.render_mode = lower(char(string(plot_cfg.render_mode)));
+if ~any(strcmp(plot_cfg.render_mode, {'scatter', 'surface'}))
+    error('plot_cfg.render_mode must be ''scatter'' or ''surface''.');
+end
+
+if ~isfield(plot_cfg, 'scatter_marker_size') || isempty(plot_cfg.scatter_marker_size)
+    plot_cfg.scatter_marker_size = 12;
+end
+
+if ~isfield(plot_cfg, 'scatter_alpha') || isempty(plot_cfg.scatter_alpha)
+    plot_cfg.scatter_alpha = 0.88;
 end
 
 if ~isfield(plot_cfg, 'downsample_step') || isempty(plot_cfg.downsample_step)
@@ -392,23 +408,42 @@ end
 end
 
 
-function h = local_plot_consensus_surface(ax, x, y, z, state_code_plot, plot_cfg)
-if numel(x) < 2
-    h = scatter3(ax, x, y, z, plot_cfg.single_sample_marker_size, ...
-        state_code_plot(:), 'filled', ...
-        'MarkerEdgeColor', plot_cfg.text_color);
+function h = local_plot_consensus_trajectory(ax, x, y, z, state_code_plot, plot_cfg)
+if numel(x) < 2 || strcmp(plot_cfg.render_mode, 'scatter')
+    marker_size = plot_cfg.scatter_marker_size;
+    if numel(x) < 2
+        marker_size = plot_cfg.single_sample_marker_size;
+    end
+    h = scatter3(ax, x, y, z, marker_size, state_code_plot(:), 'filled');
+    h.MarkerEdgeColor = 'none';
+    local_apply_marker_alpha(h, plot_cfg.scatter_alpha);
     return;
 end
 
-h = surface(ax, ...
-    [x(:).'; x(:).'], ...
-    [y(:).'; y(:).'], ...
-    [z(:).'; z(:).'], ...
-    [state_code_plot(:).'; state_code_plot(:).'], ...
-    'FaceColor', 'none', ...
-    'EdgeColor', 'flat', ...
-    'CDataMapping', 'scaled', ...
-    'LineWidth', plot_cfg.patch_line_width);
+switch plot_cfg.render_mode
+    case 'surface'
+        h = surface(ax, ...
+            [x(:).'; x(:).'], ...
+            [y(:).'; y(:).'], ...
+            [z(:).'; z(:).'], ...
+            [state_code_plot(:).'; state_code_plot(:).'], ...
+            'FaceColor', 'none', ...
+            'EdgeColor', 'flat', ...
+            'CDataMapping', 'scaled', ...
+            'LineWidth', plot_cfg.patch_line_width);
+    otherwise
+        error('Unsupported plot_cfg.render_mode: %s.', plot_cfg.render_mode);
+end
+end
+
+
+function local_apply_marker_alpha(h, alpha_value)
+if isprop(h, 'MarkerFaceAlpha')
+    h.MarkerFaceAlpha = alpha_value;
+end
+if isprop(h, 'MarkerEdgeAlpha')
+    h.MarkerEdgeAlpha = alpha_value;
+end
 end
 
 

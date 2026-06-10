@@ -76,7 +76,7 @@ end
 %  -------------------------
 output_root = io_project.get_project_processed_root();
 batch_outputs = struct([]);
-single_cfg_script = 'scripts/script_run_one_cfg_to_consensus_state_top_windows.m';
+single_cfg_script = fullfile(repo_root, 'scripts', 'script_run_one_cfg_to_consensus_state_top_windows.m');
 
 local_emit(run_log_file, 'Running BLP consensus-state batch pipeline for %d dataset(s)\n', numel(cfg_names));
 local_emit(run_log_file, 'Output root:\n  %s\n', output_root);

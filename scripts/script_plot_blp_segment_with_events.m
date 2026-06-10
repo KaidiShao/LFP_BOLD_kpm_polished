@@ -3,7 +3,7 @@ close all force;
 cfg = cfg_F12m01();
 
 cfg.plot.trace_scale = 0.18;
-cfg.plot.trace_clip = 4;
+cfg.plot.trace_clip = Inf;
 cfg.plot.within_gap = 1.4;
 cfg.plot.between_gap = 2.2;
 cfg.plot.trace_linewidth = 0.4;

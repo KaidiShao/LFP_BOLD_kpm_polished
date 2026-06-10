@@ -4,7 +4,7 @@
 %   script_postprocess_bold_reskoopnet_results.m
 %
 % For each BOLD_POST file, it automatically uses the matching dataset's:
-%   E:\DataPons_processed\<dataset>\event_density\<dataset>_event_density_2s.mat
+%   E:\DataPons_processed\<dataset>\pipeline2_event_density\<dataset>_event_density_2s.mat
 
 this_script_dir = fileparts(mfilename('fullpath'));
 repo_root = fileparts(this_script_dir);
@@ -64,7 +64,8 @@ for i_file = 1:numel(bold_post_files)
 
     try
         dataset_stem = local_dataset_stem_from_bold_post(bold_post_file);
-        density_file = fullfile(processed_root, dataset_stem, 'event_density', ...
+        density_file = fullfile( ...
+            io_project.get_pipeline_stage_dir(processed_root, dataset_stem, 2, 'event_density'), ...
             sprintf('%s_event_density_2s.mat', dataset_stem));
         if exist(density_file, 'file') ~= 2
             error('Missing event density file for %s:\n  %s', dataset_stem, density_file);

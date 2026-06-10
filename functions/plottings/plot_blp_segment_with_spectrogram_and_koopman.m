@@ -122,7 +122,8 @@ else
     title(ax1, sprintf('Original Local Field Potential Signals: %.3f-%.3f s', t1, t2));
 end
 xlim(ax1, [t1, t2]);
-ylim(ax1, [ytick_pos(1) - 1, ytick_pos(end) + 1]);
+[trace_y_min, trace_y_max] = local_get_raw_panel_y_limits(base_plot_cache, ytick_pos, x_disp, offsets);
+ylim(ax1, [trace_y_min, trace_y_max]);
 set(ax1, 'YTick', ytick_pos, 'YTickLabel', ytick_labels, 'Box', 'off');
 set(ax1, 'XTickLabel', []);
 
@@ -213,7 +214,7 @@ end
 
 function base_plot_cache = local_prepare_base_plot_cache( ...
     cfg, output_root, t1, t2, freq_lim, event_input, band_colors, ...
-    trace_scale, trace_clip, within_gap, between_gap)
+    trace_scale, ~, within_gap, between_gap)
 % Load raw/event/spectrogram data once for reuse across multiple Koopman views.
 
 show_events = ~isempty(event_input);
@@ -291,7 +292,6 @@ for c = 1:n_channels
     end
 
     xc = xc / s;
-    xc = max(min(xc, trace_clip), -trace_clip);
     x_disp(:, c) = trace_scale * xc;
 end
 
@@ -341,8 +341,32 @@ base_plot_cache.x_disp = x_disp;
 base_plot_cache.offsets = offsets;
 base_plot_cache.ytick_pos = ytick_pos;
 base_plot_cache.ytick_labels = ytick_labels;
+base_plot_cache.trace_y_min = min(x_disp + offsets, [], 'all', 'omitnan');
+base_plot_cache.trace_y_max = max(x_disp + offsets, [], 'all', 'omitnan');
 base_plot_cache.border_t_raw = border_t_raw;
 base_plot_cache.show_events = show_events;
+end
+
+
+function [trace_y_min, trace_y_max] = local_get_raw_panel_y_limits(base_plot_cache, ytick_pos, x_disp, offsets)
+if isfield(base_plot_cache, 'trace_y_min') && isfield(base_plot_cache, 'trace_y_max') && ...
+        isfinite(base_plot_cache.trace_y_min) && isfinite(base_plot_cache.trace_y_max)
+    trace_y_min = base_plot_cache.trace_y_min;
+    trace_y_max = base_plot_cache.trace_y_max;
+else
+    y_all = x_disp + offsets;
+    finite_y = y_all(isfinite(y_all));
+    if isempty(finite_y)
+        trace_y_min = ytick_pos(1) - 1;
+        trace_y_max = ytick_pos(end) + 1;
+    else
+        trace_y_min = min([finite_y(:); ytick_pos(:)]);
+        trace_y_max = max([finite_y(:); ytick_pos(:)]);
+    end
+end
+pad = 0.08 * max(eps, trace_y_max - trace_y_min);
+trace_y_min = trace_y_min - pad;
+trace_y_max = trace_y_max + pad;
 end
 
 
@@ -603,7 +627,7 @@ if ischar(event_input) || isstring(event_input)
     return;
 end
 
-search_dir = fullfile(output_root, cfg.file_stem, 'event_detection');
+search_dir = io_project.get_pipeline_stage_dir(output_root, cfg, 2, 'event_detection');
 pattern = fullfile(search_dir, [cfg.file_stem, '_bandpass_events_*.mat']);
 L = dir(pattern);
 if isempty(L)

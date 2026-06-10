@@ -30,7 +30,7 @@ if ischar(event_input) || isstring(event_input)
     return;
 end
 
-search_dir = fullfile(output_root, cfg.file_stem, 'event_detection');
+search_dir = io_project.get_pipeline_stage_dir(output_root, cfg, 2, 'event_detection');
 pattern = fullfile(search_dir, [cfg.file_stem, '_bandpass_events_*.mat']);
 L = dir(pattern);
 

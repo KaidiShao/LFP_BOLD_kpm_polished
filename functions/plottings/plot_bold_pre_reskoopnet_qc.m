@@ -114,9 +114,7 @@ end
 if ~isfield(params, 'trace_scale') || isempty(params.trace_scale)
     params.trace_scale = 1;
 end
-if ~isfield(params, 'trace_clip') || isempty(params.trace_clip)
-    params.trace_clip = 4;
-end
+params.trace_clip = Inf;
 if ~isfield(params, 'heatmap_clim') || isempty(params.heatmap_clim)
     params.heatmap_clim = [-3, 3];
 end
@@ -469,7 +467,6 @@ end
 
 function plot_offset_traces(ax, Xseg, tseg, labels, params)
 Xseg = robust_zscore(Xseg);
-Xseg = max(min(Xseg, params.trace_clip), -params.trace_clip);
 n_plot = size(Xseg, 2);
 offsets = (n_plot-1:-1:0) * params.trace_scale * 2.5;
 hold(ax, 'on');

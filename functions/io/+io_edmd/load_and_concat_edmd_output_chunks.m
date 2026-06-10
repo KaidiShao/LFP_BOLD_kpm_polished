@@ -81,7 +81,7 @@ if ~isfield(first_data, params.variable_name)
     error('File %s does not contain variable %s.', files(1).fullpath, params.variable_name);
 end
 ref_outputs = first_data.(params.variable_name);
-EDMD_outputs = ref_outputs;
+EDMD_outputs = local_apply_mode_subset_to_metadata(ref_outputs, params);
 
 all_fields = fieldnames(ref_outputs);
 concat_fields = params.concat_fields;
@@ -105,7 +105,8 @@ final_sizes = cell(n_concat_fields, 1);
 % First pass: validate chunk contents and measure concatenated lengths
 for i = 1:n_concat_fields
     field_name = concat_fields{i};
-    ref_values{i} = ref_outputs.(field_name);
+    ref_values{i} = local_apply_concat_column_subset( ...
+        ref_outputs.(field_name), field_name, params);
     ref_sizes{i} = size(ref_values{i});
     if isstruct(ref_values{i}) || iscell(ref_values{i})
         error('Concat field %s must be a plain MATLAB array, not a struct or cell.', field_name);
@@ -131,7 +132,7 @@ for k = 2:n_chunks
     current_outputs = current_data.(params.variable_name);
     concat_lengths_by_field(k, :) = local_measure_chunk_lengths( ...
         ref_outputs, current_outputs, equal_fields, concat_fields, ...
-        ref_sizes, params.concat_dim, files(k).name);
+        ref_sizes, params.concat_dim, params, files(k).name);
     chunk_lengths(k) = concat_lengths_by_field(k, 1);
 end
 
@@ -167,7 +168,7 @@ for k = 1:n_chunks
     chunk_end_idx(k) = cursor + chunk_lengths(k) - 1;
 
     EDMD_outputs = local_assign_concat_blocks( ...
-        EDMD_outputs, current_outputs, concat_fields, params.concat_dim, cursor);
+        EDMD_outputs, current_outputs, concat_fields, params.concat_dim, params, cursor);
 
     cursor = chunk_end_idx(k) + 1;
 end
@@ -233,6 +234,14 @@ if ~isfield(params, 'verbose') || isempty(params.verbose)
     params.verbose = true;
 end
 
+if ~isfield(params, 'mode_indices')
+    params.mode_indices = [];
+end
+
+if ~isfield(params, 'concat_column_indices') || isempty(params.concat_column_indices)
+    params.concat_column_indices = struct();
+end
+
 if ischar(params.concat_fields) || isstring(params.concat_fields)
     params.concat_fields = cellstr(params.concat_fields);
 elseif iscell(params.concat_fields)
@@ -263,6 +272,7 @@ end
 
 params.allow_missing_chunks = logical(params.allow_missing_chunks);
 params.verbose = logical(params.verbose);
+params.mode_indices = double(params.mode_indices(:).');
 
 if ~isscalar(params.concat_dim) || params.concat_dim < 1 || ...
         params.concat_dim ~= floor(params.concat_dim)
@@ -319,7 +329,7 @@ end
 
 
 function lengths = local_measure_chunk_lengths( ...
-    ref_outputs, current_outputs, equal_fields, concat_fields, ref_sizes, concat_dim, file_name)
+    ref_outputs, current_outputs, equal_fields, concat_fields, ref_sizes, concat_dim, params, file_name)
 for i = 1:numel(equal_fields)
     field_name = equal_fields{i};
     if ~isfield(current_outputs, field_name)
@@ -337,7 +347,8 @@ for i = 1:numel(concat_fields)
         error('Field %s is missing from %s.', field_name, file_name);
     end
 
-    value = current_outputs.(field_name);
+    value = local_apply_concat_column_subset( ...
+        current_outputs.(field_name), field_name, params);
     if isstruct(value) || iscell(value)
         error('Concat field %s must be a plain MATLAB array, not a struct or cell.', field_name);
     end
@@ -369,10 +380,11 @@ end
 
 
 function EDMD_outputs = local_assign_concat_blocks( ...
-    EDMD_outputs, current_outputs, concat_fields, concat_dim, start_idx)
+    EDMD_outputs, current_outputs, concat_fields, concat_dim, params, start_idx)
 for i = 1:numel(concat_fields)
     field_name = concat_fields{i};
-    block = current_outputs.(field_name);
+    block = local_apply_concat_column_subset( ...
+        current_outputs.(field_name), field_name, params);
     block_size = size(block);
     if numel(block_size) < concat_dim
         block_size(end+1:concat_dim) = 1;
@@ -382,4 +394,39 @@ for i = 1:numel(concat_fields)
     idx{concat_dim} = start_idx:(start_idx + block_size(concat_dim) - 1);
     EDMD_outputs.(field_name)(idx{:}) = block;
 end
+end
+
+
+function outputs = local_apply_mode_subset_to_metadata(outputs, params)
+idx = params.mode_indices;
+if isempty(idx)
+    return;
+end
+
+if isfield(outputs, 'evalues') && numel(outputs.evalues) >= max(idx)
+    outputs.evalues = outputs.evalues(idx);
+end
+
+if isfield(outputs, 'kpm_modes') && size(outputs.kpm_modes, 1) >= max(idx)
+    outputs.kpm_modes = outputs.kpm_modes(idx, :);
+end
+
+outputs.mode_indices_in_original = idx(:);
+end
+
+
+function value = local_apply_concat_column_subset(value, field_name, params)
+if ~isfield(params.concat_column_indices, field_name)
+    return;
+end
+
+idx = params.concat_column_indices.(field_name);
+if isempty(idx)
+    return;
+end
+
+idx = double(idx(:).');
+subs = repmat({':'}, 1, max(ndims(value), 2));
+subs{2} = idx;
+value = value(subs{:});
 end

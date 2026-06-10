@@ -26,4 +26,17 @@ cfg.sessions(1).include = true;
 cfg.sessions(1).selected_channels = cfg.channels.selected_all;
 cfg.sessions(1).notes = 'spont'; % spontaneous
 
+cfg.sessions(2).session_id = 26:34;
+cfg.sessions(2).include = false;
+cfg.sessions(2).selected_channels = cfg.channels.selected_all;
+cfg.sessions(2).notes = 'estim'; % no matching *_blp.mat files under raw blp root
+
+%% BOLD ROI naming
+cfg.bold = struct();
+cfg.bold.data_subfolder = 'roits';
+cfg.bold.input_var = 'roiTs';
+cfg.bold.role_map = struct();
+cfg.bold.role_map.elehp = 'ele_HP';
+cfg.bold.role_map.hp = 'HP';
+
 end

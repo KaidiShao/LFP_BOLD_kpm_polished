@@ -29,6 +29,7 @@ end
 
 params = local_apply_defaults(params);
 local_validate_phi(phi);
+[T0, K0] = size(phi);
 
 if ~isempty(dt)
     if ~isnumeric(dt) || ~isscalar(dt) || ~isfinite(dt) || dt <= 0
@@ -37,16 +38,21 @@ if ~isempty(dt)
     dt = double(dt);
 end
 
-[X, value_transform_used] = local_transform_phi(phi, params.value_transform);
-[T, K] = size(X);
-[win_len, step_len, window_sec_used, step_sec_used] = ...
-    local_resolve_window_lengths(params, dt, T);
-
-[session_info, session_source] = local_resolve_sessions(params, T);
+[session_info, session_source] = local_resolve_sessions(params, T0);
 if params.require_session_metadata && strcmp(session_source, 'single_trace_fallback')
     error(['Thresholded density requires session metadata, but none ', ...
         'was found in params or params.observable_file.']);
 end
+
+[X, activity_meta] = compute_eigenfunction_activity(phi, dt, params, session_info);
+value_transform_used = activity_meta.value_transform_used;
+[T, K] = size(X);
+if T ~= T0 || K ~= K0
+    error('Activity transform changed matrix size from [%d %d] to [%d %d].', ...
+        T0, K0, T, K);
+end
+[win_len, step_len, window_sec_used, step_sec_used] = ...
+    local_resolve_window_lengths(params, dt, T);
 
 threshold_ratio = local_resolve_threshold_ratio(params.threshold_ratio, K);
 [start_idx, end_idx, center_idx, window_session_idx, window_session_id] = ...
@@ -125,6 +131,10 @@ D.t_centers = t_center(:);
 D.mode_index = local_mode_index(params, K);
 D.selected_mode_idx_in_original = local_get_field(params, ...
     'selected_mode_idx_in_original', []);
+D.mode_metadata = local_build_mode_metadata( ...
+    params, D.mode_index, D.selected_mode_idx_in_original, ...
+    K, threshold_ratio, dt, value_transform_used, activity_meta);
+D.activity_metadata = activity_meta;
 
 D.input = struct();
 D.input.n_samples = T;
@@ -132,6 +142,11 @@ D.input.n_modes = K;
 D.input.dt = dt;
 D.input.value_transform_requested = params.value_transform;
 D.input.value_transform_used = value_transform_used;
+D.input.lfp_activity_transform = params.lfp_activity_transform;
+D.input.lfp_activity_window_policy = params.lfp_activity_window_policy;
+D.input.envelope_enable = logical(params.envelope_enable);
+D.input.envelope_policy = params.envelope_policy;
+D.input.envelope_window_policy = params.lfp_activity_window_policy;
 D.input.axis_order = 'time_by_mode';
 
 D.params = params;
@@ -183,13 +198,15 @@ if params.save_results
     density = D.density_time_by_mode; %#ok<NASGU>
     thresholds = D.threshold_by_mode; %#ok<NASGU>
     t_centers = D.t_centers; %#ok<NASGU>
+    mode_metadata = D.mode_metadata; %#ok<NASGU>
+    activity_metadata = D.activity_metadata; %#ok<NASGU>
     params_saved = D.params; %#ok<NASGU>
     if params.save_v7_3
         save(mat_path, 'D', 'density', 'thresholds', 't_centers', ...
-            'params_saved', '-v7.3');
+            'mode_metadata', 'activity_metadata', 'params_saved', '-v7.3');
     else
         save(mat_path, 'D', 'density', 'thresholds', 't_centers', ...
-            'params_saved');
+            'mode_metadata', 'activity_metadata', 'params_saved');
     end
 end
 end
@@ -203,6 +220,39 @@ if ~isfield(params, 'step_samples'), params.step_samples = []; end
 if ~isfield(params, 'threshold_ratio'), params.threshold_ratio = 0.7; end
 if ~isfield(params, 'threshold_mode'), params.threshold_mode = 'meanplusstd'; end
 if ~isfield(params, 'value_transform'), params.value_transform = 'auto'; end
+if ~isfield(params, 'lfp_activity_transform') || isempty(params.lfp_activity_transform)
+    params.lfp_activity_transform = local_activity_transform_from_value_transform( ...
+        params.value_transform);
+end
+if ~isfield(params, 'lfp_activity_window_policy') || isempty(params.lfp_activity_window_policy)
+    params.lfp_activity_window_policy = 'samplewise_no_envelope';
+end
+if ~isfield(params, 'envelope_enable'), params.envelope_enable = false; end
+if ~isfield(params, 'envelope_policy') || isempty(params.envelope_policy)
+    params.envelope_policy = 'none';
+end
+if ~isfield(params, 'envelope_alpha') || isempty(params.envelope_alpha)
+    params.envelope_alpha = 0.35;
+end
+if ~isfield(params, 'envelope_min_window_sec') || isempty(params.envelope_min_window_sec)
+    params.envelope_min_window_sec = 0.03;
+end
+if ~isfield(params, 'envelope_max_window_sec') || isempty(params.envelope_max_window_sec)
+    params.envelope_max_window_sec = 1.0;
+end
+if ~isfield(params, 'envelope_fallback_window_sec') || isempty(params.envelope_fallback_window_sec)
+    params.envelope_fallback_window_sec = 0.10;
+end
+if ~isfield(params, 'envelope_window_sec'), params.envelope_window_sec = []; end
+if ~isfield(params, 'envelope_window_sec_by_mode'), params.envelope_window_sec_by_mode = []; end
+if ~isfield(params, 'envelope_window_samples'), params.envelope_window_samples = []; end
+if ~isfield(params, 'envelope_window_samples_by_mode'), params.envelope_window_samples_by_mode = []; end
+if ~isfield(params, 'activity_output_class') || isempty(params.activity_output_class)
+    params.activity_output_class = 'single';
+end
+if ~isfield(params, 'evalues_discrete'), params.evalues_discrete = []; end
+if ~isfield(params, 'evalues_continuous'), params.evalues_continuous = []; end
+if ~isfield(params, 'evalues_bilinear'), params.evalues_bilinear = []; end
 if ~isfield(params, 'density_denominator')
     params.density_denominator = 'window_samples';
 end
@@ -278,6 +328,235 @@ end
 function local_validate_phi(phi)
 if ~isnumeric(phi) || ndims(phi) ~= 2 || isempty(phi)
     error('phi must be a nonempty numeric [T x K] matrix.');
+end
+end
+
+
+function meta = local_build_mode_metadata( ...
+        params, mode_index, selected_mode_idx, K, threshold_ratio, dt, ...
+        value_transform_used, activity_meta)
+if nargin < 8
+    activity_meta = struct();
+end
+density_index = (1:K).';
+source_mode_index = mode_index(:);
+raw_efun_index = source_mode_index;
+if ~isempty(selected_mode_idx) && numel(selected_mode_idx) == K
+    raw_efun_index = selected_mode_idx(:);
+end
+
+lambda_discrete = local_get_complex_vector( ...
+    params, {'evalues_discrete'}, K);
+lambda_continuous = local_get_complex_vector( ...
+    params, {'evalues_continuous', 'evalues_bilinear'}, K);
+
+if all(isnan(real(lambda_continuous))) && ~isempty(dt) && ...
+        all(~isnan(real(lambda_discrete)))
+    lambda_continuous = (2 / dt) .* ...
+        (lambda_discrete - 1) ./ (lambda_discrete + 1);
+end
+
+[timescale_sec_bilinear, frequency_hz_bilinear] = local_timescale_from_continuous_lambda( ...
+    lambda_continuous);
+[timescale_sec_discrete_log, frequency_hz_discrete_angle] = ...
+    local_timescale_from_discrete_lambda(lambda_discrete, dt);
+[timescale_sec, timescale_source] = local_prefer_discrete_timescale( ...
+    timescale_sec_discrete_log, timescale_sec_bilinear);
+[frequency_hz, frequency_source] = local_prefer_discrete_frequency( ...
+    frequency_hz_discrete_angle, frequency_hz_bilinear);
+
+[env_window_sec, env_window_samples, env_tau_sec, ...
+    env_window_source, env_window_status] = ...
+    local_activity_metadata_columns(activity_meta, K);
+
+meta = table( ...
+    density_index, ...
+    source_mode_index, ...
+    raw_efun_index, ...
+    lambda_discrete(:), ...
+    real(lambda_continuous(:)), ...
+    imag(lambda_continuous(:)), ...
+    timescale_sec(:), ...
+    frequency_hz(:), ...
+    timescale_sec_discrete_log(:), ...
+    frequency_hz_discrete_angle(:), ...
+    timescale_sec_bilinear(:), ...
+    frequency_hz_bilinear(:), ...
+    timescale_source(:), ...
+    frequency_source(:), ...
+    threshold_ratio(:), ...
+    repmat({char(params.lfp_activity_transform)}, K, 1), ...
+    repmat({char(params.lfp_activity_window_policy)}, K, 1), ...
+    repmat({char(value_transform_used)}, K, 1), ...
+    repmat(logical(params.envelope_enable), K, 1), ...
+    repmat({char(params.envelope_policy)}, K, 1), ...
+    env_window_sec(:), ...
+    env_window_samples(:), ...
+    env_tau_sec(:), ...
+    env_window_source(:), ...
+    env_window_status(:), ...
+    'VariableNames', { ...
+    'density_index', ...
+    'source_mode_index', ...
+    'raw_efun_index', ...
+    'lambda_discrete', ...
+    'lambda_continuous_real', ...
+    'lambda_continuous_imag', ...
+    'timescale_sec', ...
+    'frequency_hz', ...
+    'timescale_sec_discrete_log', ...
+    'frequency_hz_discrete_angle', ...
+    'timescale_sec_bilinear', ...
+    'frequency_hz_bilinear', ...
+    'timescale_source', ...
+    'frequency_source', ...
+    'threshold_ratio', ...
+    'lfp_activity_transform', ...
+    'lfp_activity_window_policy', ...
+    'value_transform_used', ...
+    'envelope_enable', ...
+    'envelope_policy', ...
+    'envelope_window_sec', ...
+    'envelope_window_samples', ...
+    'envelope_timescale_sec', ...
+    'envelope_window_source', ...
+    'envelope_window_status'});
+end
+
+
+function [window_sec, window_samples, tau_sec, source, status] = ...
+        local_activity_metadata_columns(activity_meta, K)
+window_sec = nan(K, 1);
+window_samples = zeros(K, 1);
+tau_sec = nan(K, 1);
+source = repmat({''}, K, 1);
+status = repmat({''}, K, 1);
+if ~isstruct(activity_meta)
+    return;
+end
+if isfield(activity_meta, 'envelope_window_sec_by_mode')
+    values = activity_meta.envelope_window_sec_by_mode(:);
+    if numel(values) == K
+        window_sec = double(values);
+    end
+end
+if isfield(activity_meta, 'envelope_window_samples_by_mode')
+    values = activity_meta.envelope_window_samples_by_mode(:);
+    if numel(values) == K
+        window_samples = double(values);
+    end
+end
+if isfield(activity_meta, 'envelope_tau_sec_by_mode')
+    values = activity_meta.envelope_tau_sec_by_mode(:);
+    if numel(values) == K
+        tau_sec = double(values);
+    end
+end
+if isfield(activity_meta, 'envelope_window_source_by_mode')
+    values = cellstr(string(activity_meta.envelope_window_source_by_mode(:)));
+    if numel(values) == K
+        source = values;
+    end
+end
+if isfield(activity_meta, 'envelope_window_status_by_mode')
+    values = cellstr(string(activity_meta.envelope_window_status_by_mode(:)));
+    if numel(values) == K
+        status = values;
+    end
+end
+end
+
+
+function values = local_get_complex_vector(params, field_names, K)
+values = complex(nan(K, 1), nan(K, 1));
+for i = 1:numel(field_names)
+    field_name = field_names{i};
+    if ~isfield(params, field_name) || isempty(params.(field_name))
+        continue;
+    end
+
+    candidate = params.(field_name)(:);
+    if numel(candidate) ~= K
+        error('params.%s must have one value per mode.', field_name);
+    end
+
+    values = candidate;
+    return;
+end
+end
+
+
+function [timescale_sec, frequency_hz] = local_timescale_from_discrete_lambda(lambda, dt)
+lambda = lambda(:);
+timescale_sec = nan(size(lambda));
+frequency_hz = nan(size(lambda));
+if isempty(dt) || ~isfinite(dt) || dt <= 0
+    return;
+end
+
+rho = abs(lambda);
+theta = abs(angle(lambda));
+
+valid_decay = isfinite(rho) & rho > 0 & rho < 1;
+timescale_sec(valid_decay) = -double(dt) ./ log(rho(valid_decay));
+
+unstable = isfinite(rho) & rho >= 1;
+timescale_sec(unstable) = Inf;
+
+valid_freq = isfinite(theta);
+frequency_hz(valid_freq) = theta(valid_freq) ./ (2 * pi * double(dt));
+end
+
+
+function [preferred, source] = local_prefer_discrete_timescale(discrete_value, bilinear_value)
+preferred = discrete_value(:);
+source = repmat({'discrete_log_abs_evalue'}, numel(preferred), 1);
+
+missing_discrete = isnan(preferred);
+preferred(missing_discrete) = bilinear_value(missing_discrete);
+source(missing_discrete) = {'bilinear_realpart'};
+
+still_missing = isnan(preferred);
+source(still_missing) = {'missing'};
+end
+
+
+function [preferred, source] = local_prefer_discrete_frequency(discrete_value, bilinear_value)
+preferred = discrete_value(:);
+source = repmat({'discrete_angle'}, numel(preferred), 1);
+
+missing_discrete = isnan(preferred);
+preferred(missing_discrete) = bilinear_value(missing_discrete);
+source(missing_discrete) = {'bilinear_imag'};
+
+still_missing = isnan(preferred);
+source(still_missing) = {'missing'};
+end
+
+
+function [timescale_sec, frequency_hz] = local_timescale_from_continuous_lambda(lambda)
+lambda = lambda(:);
+lambda_real = real(lambda);
+lambda_imag = imag(lambda);
+
+timescale_sec = nan(size(lambda_real));
+valid_decay = isfinite(lambda_real) & lambda_real < 0;
+timescale_sec(valid_decay) = -1 ./ lambda_real(valid_decay);
+
+frequency_hz = nan(size(lambda_imag));
+valid_freq = isfinite(lambda_imag);
+frequency_hz(valid_freq) = abs(lambda_imag(valid_freq)) ./ (2 * pi);
+end
+
+
+function value = local_activity_transform_from_value_transform(value_transform)
+switch lower(char(value_transform))
+    case {'abs', 'auto'}
+        value = 'abs_magnitude';
+    case 'real'
+        value = 'signed_real';
+    otherwise
+        value = 'feature_as_is';
 end
 end
 

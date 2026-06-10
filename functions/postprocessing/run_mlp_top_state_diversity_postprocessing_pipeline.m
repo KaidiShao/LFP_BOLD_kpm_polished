@@ -459,6 +459,11 @@ for i = 1:numel(u)
 end
 runs = runs(keep);
 
+runs = filter_invalid_blp_mlp_runs(runs, params);
+if isempty(runs)
+    return;
+end
+
 runs = local_filter_discovered_runs(runs, params);
 if isempty(runs)
     return;

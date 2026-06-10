@@ -18,128 +18,13 @@ end
 if nargin < 3 || isempty(params)
     params = struct();
 end
-params = local_apply_defaults(params);
+params = apply_bold_efun_density_cross_correlation_defaults(params);
 
-B = local_load_bold_post(bold_post_input);
-[session, dt, T] = local_resolve_bold_session(B);
-params.dt_current = dt;
-[feature_specs, bold_feature_mats] = local_build_bold_features(B, params);
-
-max_lag_bins = round(params.max_lag_sec / dt);
-border_pad_bins = round(params.border_mask_sec / dt);
-lag_bins = (-max_lag_bins:max_lag_bins).';
-lag_sec = lag_bins * dt;
-session_id_by_sample = local_session_id_vector(T, session);
-base_mask = local_border_mask(T, session, border_pad_bins);
-
-if isempty(density_sources)
-    density_sources = local_default_density_sources(B);
-end
-density_sources = local_normalize_density_sources(density_sources);
-
-all_rows = {};
-source_results = {};
-
-for i_src = 1:numel(density_sources)
-    source = density_sources{i_src};
-    candidates = local_load_density_candidates(source, params);
-    if isempty(candidates)
-        warning('No density candidates loaded for source %s.', source.name);
-        continue;
-    end
-
-    best_abs = -Inf;
-    best_source = [];
-    best_candidate_idx = NaN;
-    best_feature_idx = NaN;
-    best_maps = [];
-
-    for i_cand = 1:numel(candidates)
-        cand = local_align_density_candidate(local_get_cell_or_array_item(candidates, i_cand), B, T, dt);
-
-        for i_feat = 1:numel(feature_specs)
-            maps = local_lagged_corr_maps(cand.X, bold_feature_mats{i_feat}, ...
-                lag_bins, session_id_by_sample, base_mask, params);
-            current_best = local_nanmax(maps.peak_abs_corr(:));
-            if current_best > best_abs
-                best_abs = current_best;
-                best_source = cand;
-                best_candidate_idx = i_cand;
-                best_feature_idx = i_feat;
-                best_maps = maps;
-            end
-        end
-    end
-
-    if isempty(best_source)
-        continue;
-    end
-
-    source_result = struct();
-    source_result.source = source;
-    source_result.best_candidate = best_source;
-    source_result.best_candidate_idx = best_candidate_idx;
-    source_result.best_feature = feature_specs{best_feature_idx};
-    source_result.best_bold_matrix = bold_feature_mats{best_feature_idx};
-    source_result.best_maps = best_maps;
-    source_result.lag_bins = lag_bins;
-    source_result.lag_sec = lag_sec;
-    source_result.positive_lag_definition = 'density leads BOLD';
-    source_results{end + 1, 1} = source_result; %#ok<AGROW>
-
-    rows_i = local_build_peak_rows(source_result, feature_specs{best_feature_idx});
-    all_rows = [all_rows; rows_i]; %#ok<AGROW>
-end
-
-peak_table = local_rows_to_table(all_rows);
-if ~isempty(peak_table)
-    finite_peak = isfinite(peak_table.peak_abs_corr);
-    peak_table = [ ...
-        sortrows(peak_table(finite_peak, :), 'peak_abs_corr', 'descend'); ...
-        peak_table(~finite_peak, :)];
-end
-if isempty(peak_table)
-    top_table = peak_table;
-else
-    top_table = peak_table(1:min(height(peak_table), params.top_n), :);
-end
-
-out = struct();
-out.created_at = char(datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss'));
-out.bold_post_file = local_get_field(B, 'source_file', '');
-out.params = params;
-out.dt = dt;
-out.T = T;
-out.session = session;
-out.max_lag_bins = max_lag_bins;
-out.border_pad_bins = border_pad_bins;
-out.border_mask = base_mask;
-out.lag_bins = lag_bins;
-out.lag_sec = lag_sec;
-out.positive_lag_definition = 'density leads BOLD';
-out.feature_specs = feature_specs;
-out.density_sources = density_sources;
-out.source_results = source_results;
-out.peak_table = peak_table;
-out.top_table = top_table;
-
-if params.save_results
-    if exist(params.save_dir, 'dir') ~= 7
-        mkdir(params.save_dir);
-    end
-    save_file = fullfile(params.save_dir, [params.save_tag, '.mat']);
-    csv_file = fullfile(params.save_dir, [params.save_tag, '_peaks.csv']);
-    top_csv_file = fullfile(params.save_dir, [params.save_tag, '_top.csv']);
-    save(save_file, 'out', '-v7.3');
-    if ~isempty(peak_table), writetable(peak_table, csv_file); end
-    if ~isempty(top_table), writetable(top_table, top_csv_file); end
-    out.save_paths = struct('mat_file', save_file, ...
-        'peak_csv', csv_file, 'top_csv', top_csv_file);
-end
-
-if params.make_figures
-    out.figure_paths = plot_bold_efun_density_cross_correlation_summary(out, params.plot);
-end
+ctx = prepare_bold_efun_density_cross_correlation_context( ...
+    bold_post_input, density_sources, params);
+stats = compute_bold_efun_density_cross_correlation_source_results(ctx);
+out = build_bold_efun_density_cross_correlation_output(ctx, stats);
+out = publish_bold_efun_density_cross_correlation_output(out, params);
 end
 
 
@@ -159,6 +44,7 @@ params = local_set_default(params, 'save_results', true);
 params = local_set_default(params, 'save_dir', pwd);
 params = local_set_default(params, 'save_tag', 'bold_efun_density_xcorr');
 params = local_set_default(params, 'make_figures', true);
+params = local_set_default(params, 'save_full_source_results', true);
 if ~isfield(params, 'plot') || isempty(params.plot)
     params.plot = struct();
 end
@@ -169,13 +55,52 @@ params.plot = local_set_default(params.plot, 'resolution', 220);
 end
 
 
+function out = local_slim_output_for_storage(out)
+% Keep the tables needed by downstream top-map/ROI exporters, while dropping
+% full signal matrices and lag cubes that dominate memory and MAT-file size.
+if ~isfield(out, 'source_results') || isempty(out.source_results)
+    return;
+end
+
+for i_src = 1:numel(out.source_results)
+    if iscell(out.source_results)
+        sr = out.source_results{i_src};
+    else
+        sr = out.source_results(i_src);
+    end
+
+    if isfield(sr, 'best_candidate') && isstruct(sr.best_candidate)
+        sr.best_candidate = rmfield_if_present(sr.best_candidate, {'X'});
+    end
+    sr = rmfield_if_present(sr, {'best_bold_matrix'});
+    if isfield(sr, 'best_maps') && isstruct(sr.best_maps)
+        sr.best_maps = rmfield_if_present(sr.best_maps, {'corr_cube', 'valid_count'});
+    end
+
+    if iscell(out.source_results)
+        out.source_results{i_src} = sr;
+    else
+        out.source_results(i_src) = sr;
+    end
+end
+out.storage_policy = 'slim_source_results';
+end
+
+
+function S = rmfield_if_present(S, names)
+for i = 1:numel(names)
+    name = names{i};
+    if isfield(S, name)
+        S = rmfield(S, name);
+    end
+end
+end
+
+
 function B = local_load_bold_post(input)
 if ischar(input) || isstring(input)
     file = char(string(input));
-    available = whos('-file', file);
-    available_names = {available.name};
-    load_names = intersect({'BOLD_POST', 'EDMD_outputs'}, available_names, 'stable');
-    S = load(file, load_names{:});
+    S = load_mat_file_with_short_path(file, 'BOLD_POST', 'EDMD_outputs');
     if isfield(S, 'BOLD_POST')
         B = S.BOLD_POST;
     elseif isfield(S, 'EDMD_outputs')
@@ -316,7 +241,8 @@ if isempty(dataset_stem)
     return;
 end
 processed_root = io_project.get_project_processed_root();
-event_file = fullfile(processed_root, dataset_stem, 'event_density', ...
+event_file = fullfile( ...
+    io_project.get_pipeline_stage_dir(processed_root, dataset_stem, 2, 'event_density'), ...
     sprintf('%s_event_density_2s.mat', dataset_stem));
 if exist(event_file, 'file') == 2
     source = struct();
@@ -715,10 +641,52 @@ end
 
 function meta = local_density_meta(D)
 meta = struct();
-fields = {'threshold_by_mode', 'threshold_by_component', 'params', 'summary'};
+fields = {'threshold_by_mode', 'threshold_by_component', 'summary'};
 for i = 1:numel(fields)
     if isfield(D, fields{i})
         meta.(fields{i}) = D.(fields{i});
+    end
+end
+if isfield(D, 'params')
+    meta.params = local_slim_metadata(D.params);
+end
+end
+
+
+function value = local_slim_metadata(value)
+max_elements = 10000;
+if isnumeric(value) || islogical(value)
+    if numel(value) > max_elements
+        value = struct( ...
+            'omitted_large_array', true, ...
+            'class_name', class(value), ...
+            'size', size(value));
+    end
+elseif isstring(value) || ischar(value)
+    if numel(value) > max_elements
+        value = struct( ...
+            'omitted_large_text', true, ...
+            'class_name', class(value), ...
+            'size', size(value));
+    end
+elseif iscell(value)
+    if numel(value) > max_elements
+        value = struct( ...
+            'omitted_large_cell', true, ...
+            'class_name', class(value), ...
+            'size', size(value));
+    else
+        for i = 1:numel(value)
+            value{i} = local_slim_metadata(value{i});
+        end
+    end
+elseif isstruct(value)
+    for i_item = 1:numel(value)
+        names = fieldnames(value(i_item));
+        for i_name = 1:numel(names)
+            name = names{i_name};
+            value(i_item).(name) = local_slim_metadata(value(i_item).(name));
+        end
     end
 end
 end

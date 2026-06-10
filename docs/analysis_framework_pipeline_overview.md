@@ -9,7 +9,7 @@ implementation conditions.
 
 ```mermaid
 flowchart LR
-    D["Datasets<br/>E10gb1, E10fV1, E10gH1, F12m01"]
+    D["Datasets<br/>E10gb1, E10fV1, E10gH1,<br/>F12m01, E10gW1"]
 
     D --> BLP_RAW["Raw BLP sessions"]
     D --> BOLD_RAW["Raw BOLD ROI time series"]
@@ -33,7 +33,7 @@ flowchart LR
 
         subgraph BOLD_PRE["BOLD preprocessing"]
             direction TB
-            BOLD_OBS["BOLD observables<br/>roi_mean, eleHP, HP, svd,<br/>HP_svd100, global_svd100,<br/>slow_band_power"]
+            BOLD_OBS["Current BOLD observables<br/>global_svd100, gsvd100_ds,<br/>HP_svd100, roi_mean"]
             BOLD_QC["Pre-ResKoopNet QC"]
             BOLD_OBS --> BOLD_QC
         end
@@ -48,7 +48,7 @@ flowchart LR
 
         BLP_MLP["BLP MLP ResKoopNet<br/>observable: abs or complex_split<br/>residual: projected_kv or projected_vlambda"]
         BLP_CNN["BLP CNN ResKoopNet<br/>optional comparison branch"]
-        BOLD_MLP["BOLD MLP ResKoopNet<br/>7 BOLD observable modes<br/>x projected_kv / projected_vlambda"]
+        BOLD_MLP["BOLD MLP ResKoopNet<br/>current downstream modes:<br/>global_svd100, gsvd100_ds,<br/>HP_svd100, roi_mean"]
     end
 
     BLP_OBS --> BLP_MLP
@@ -137,7 +137,7 @@ choice, not as a brute-force list.
 | Model family | MLP, CNN | MLP is the primary vector-observable model. CNN is an optional branch to test whether local spectrogram structure helps. |
 | BLP observable | abs, complex_split | abs focuses on power magnitude. complex_split keeps real and imaginary spectrogram information. |
 | Residual form | projected_kv, projected_vlambda | Two residual definitions for Koopman-consistent reconstruction and dynamics. |
-| BOLD observable | roi_mean, eleHP, HP, svd, HP_svd100, global_svd100, slow_band_power | Tests spatial scale, targeted regions, and dimensionality reduction choices. |
+| BOLD observable | Current P3 build/QC and downstream set: global_svd100, gsvd100_ds, HP_svd100, roi_mean. Other option modes include HP, eleHP, svd, and slow_band_power variants; these are not current mainline modes unless explicitly re-enabled. | Tests spatial scale, targeted regions, and dimensionality reduction choices. |
 | Postprocessing target | state diversity, eigenfunction DR, spike correlation, BOLD activation, BLP-BOLD correlation | Tests whether learned dynamics map onto state structure, spiking, spatial BOLD maps, and cross-modal lagged coupling. |
 
 ## Suggested Figure Set For The Discussion

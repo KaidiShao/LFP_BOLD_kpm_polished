@@ -15,10 +15,10 @@ The goal is to answer four practical questions:
 For maintenance purposes, treat this repo as:
 
 - 1 overall analysis framework
-- 7 operational pipelines
+- 9 operational pipelines
 - 1 optional comparison branch
 
-The seven operational pipelines are:
+The nine operational pipelines are:
 
 1. BLP dictionary pipeline
 2. BLP event-state pipeline
@@ -27,6 +27,8 @@ The seven operational pipelines are:
 5. BLP eigenfunction interpretation pipeline
 6. BOLD postprocessing pipeline
 7. BLP-BOLD cross-modal coupling pipeline
+8. BOLD eigenfunction family reduction pipeline
+9. Dimred BOLD-LFP cross-modal coupling pipeline
 
 Optional branch:
 
@@ -43,6 +45,8 @@ Optional branch:
 | BLP eigenfunction interpretation pipeline | Interpret trained BLP MLP outputs using DR, top windows, and spike alignment. | `scripts/script_run_all_complete_mlp_efun_dr_pipeline.m`, `functions/postprocessing/run_eigenfunction_reduction_pipeline.m`, `functions/postprocessing/run_mlp_top_state_diversity_postprocessing_pipeline.m` | reduced eigenfunction results, state-space plots, top-window figures, spike correlation outputs |
 | BOLD postprocessing pipeline | Interpret trained BOLD MLP outputs using postprocessed eigenfunctions, deconvolution, and timescales. | `scripts/script_postprocess_bold_reskoopnet_results.m`, `functions/postprocessing/postprocess_bold_reskoopnet_results.m` | BOLD post MAT files, deconvolution outputs, timescale figures, activation maps |
 | BLP-BOLD cross-modal coupling pipeline | Quantify lagged coupling between BLP densities/states and BOLD eigenfunction dynamics. | `scripts/script_correlate_bold_efuns_with_densities.m`, `functions/postprocessing/compute_bold_efun_density_cross_correlation.m` | cross-correlation MAT files, peak tables, summary figures |
+| BOLD eigenfunction family reduction pipeline | Apply P5-style DR to BOLD efuns and deconvolved efuns before cross-modal interpretation. | `scripts/script_run_one_cfg_bold_eigenfunction_reduction.m`, `functions/postprocessing/run_bold_eigenfunction_reduction_pipeline.m` | reduced BOLD efun/deconv results and BOLD observable/efun/component summary figures |
+| Dimred BOLD-LFP cross-modal coupling pipeline | Compare P9 dimred BOLD efun/deconv components with LFP density sources and export spatial readouts. | `scripts/script_run_one_cfg_bold_dimred_cross_modal_coupling.m`, `functions/postprocessing/run_one_bold_dimred_cross_modal_coupling_core.m` | component-density cross-correlation MAT/CSV files, component activation maps, component ROI summaries |
 
 ## Pipeline Ownership By Folder
 
@@ -228,6 +232,47 @@ Inputs usually come from:
 The single-run script
 `script_run_one_bold_reskoopnet_post_xcorr_activation_maps.m` spans both the
 BOLD postprocessing pipeline and the cross-modal coupling pipeline.
+
+### 8. BOLD eigenfunction family reduction pipeline
+
+Primary scripts:
+
+- `scripts/script_run_one_cfg_bold_eigenfunction_reduction.m`
+
+Primary functions:
+
+- `functions/postprocessing/build_bold_eigenfunction_reduction_params.m`
+- `functions/postprocessing/discover_completed_bold_eigenfunction_reduction_runs.m`
+- `functions/postprocessing/build_bold_eigenfunction_reduction_cfg.m`
+- `functions/postprocessing/prepare_bold_eigenfunction_reduction_inputs.m`
+- `functions/postprocessing/run_bold_eigenfunction_reduction_pipeline.m`
+- `functions/postprocessing/plot_bold_observable_efun_dimred_summary.m`
+
+This pipeline consumes pipeline 7 `BOLD_POST` files and applies the same DR
+method families used in pipeline 5 (`SVD`, `logSVD`, `NMF`, `MDS`, `UMAP`) to
+`efun_abs`, `efun_real`, `deconv_abs`, and `deconv_real` features. Component
+count sweeps default to `3:20`.
+
+### 9. Dimred BOLD-LFP cross-modal coupling pipeline
+
+Primary scripts:
+
+- `scripts/script_run_one_cfg_bold_dimred_cross_modal_coupling.m`
+
+Primary functions:
+
+- `functions/postprocessing/build_bold_dimred_cross_modal_coupling_params.m`
+- `functions/postprocessing/discover_completed_bold_dimred_cross_modal_coupling_runs.m`
+- `functions/postprocessing/compute_bold_dimred_efun_density_cross_correlation.m`
+- `functions/postprocessing/run_one_bold_dimred_cross_modal_coupling_core.m`
+- `functions/postprocessing/process_bold_dimred_cross_modal_coupling_runs.m`
+- `functions/postprocessing/export_bold_dimred_top_xcorr_activation_maps.m`
+- `functions/postprocessing/export_bold_dimred_top_xcorr_roi_bar_summaries.m`
+
+This pipeline consumes pipeline 9 results and BLP/LFP density sources, then
+ranks BOLD dimred components by lagged coupling. Spatial readouts reconstruct
+each component's observable-space activation by combining its P9 mode weights
+with the contributing BOLD Koopman spatial weights.
 
 ### Optional BLP CNN comparison branch
 

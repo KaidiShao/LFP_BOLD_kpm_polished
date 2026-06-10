@@ -85,14 +85,11 @@ function [fig, timescale_info] = postprocess_EDMD_outputs_timescale(EDMD_outputs
     dt = cfg.dt;
 
     % -------------------- fetch ALL vs SELECTED --------------------
-    efuns_sel_raw = EDMD_outputs.efuns;
-    evals_sel_raw = EDMD_outputs.evalues;
+    [efuns_sel_raw, evals_sel_raw] = local_resolve_edmd_efuns(EDMD_outputs);
 
     if isfield(EDMD_outputs, 'original_sorted') && ...
-            isfield(EDMD_outputs.original_sorted, 'efuns') && ...
             isfield(EDMD_outputs.original_sorted, 'evalues')
-        efuns_all_raw = EDMD_outputs.original_sorted.efuns;
-        evals_all_raw = EDMD_outputs.original_sorted.evalues;
+        [efuns_all_raw, evals_all_raw] = local_resolve_edmd_efuns(EDMD_outputs.original_sorted);
     else
         efuns_all_raw = efuns_sel_raw;
         evals_all_raw = evals_sel_raw;
@@ -405,6 +402,39 @@ function cmap = local_diverging_cmap()
     else
         cmap = jet(256);
     end
+end
+
+function [efuns_raw, evals_raw] = local_resolve_edmd_efuns(E)
+%LOCAL_RESOLVE_EDMD_EFUNS Accept direct efuns or source_efuns + column indices.
+    if ~isfield(E, 'evalues') || isempty(E.evalues)
+        error('EDMD_outputs must contain evalues.');
+    end
+    evals_raw = E.evalues(:);
+
+    if isfield(E, 'efuns') && ~isempty(E.efuns)
+        efuns_raw = E.efuns;
+        if size(efuns_raw, 2) ~= numel(evals_raw)
+            error('Dimension mismatch: size(efuns,2)=%d but numel(evalues)=%d.', ...
+                size(efuns_raw, 2), numel(evals_raw));
+        end
+        return;
+    end
+
+    if isfield(E, 'source_efuns') && ~isempty(E.source_efuns) && ...
+            isfield(E, 'efun_col_indices') && ~isempty(E.efun_col_indices)
+        idx = E.efun_col_indices(:);
+        if numel(idx) ~= numel(evals_raw)
+            error(['Dimension mismatch: numel(efun_col_indices)=%d but ', ...
+                'numel(evalues)=%d.'], numel(idx), numel(evals_raw));
+        end
+        if any(idx < 1) || any(idx > size(E.source_efuns, 2))
+            error('efun_col_indices exceed source_efuns column count.');
+        end
+        efuns_raw = E.source_efuns(:, idx);
+        return;
+    end
+
+    error('EDMD_outputs must contain efuns, or source_efuns with efun_col_indices.');
 end
 
 function [tau_th, kappa_th] = local_theoretical_timescale(lambda_d, dt)

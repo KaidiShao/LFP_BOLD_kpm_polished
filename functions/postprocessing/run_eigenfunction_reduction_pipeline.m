@@ -404,7 +404,13 @@ prep = struct();
 prep.dt = dt;
 prep.dt_source = dt_source;
 prep.time_axis = time_axis;
-prep.selected_mode_idx_in_original = idx_sorted_selected(:);
+if isfield(EDMD_outputs, 'mode_indices_in_original') && ...
+        numel(EDMD_outputs.mode_indices_in_original) >= max(idx_sorted_selected)
+    source_mode_indices = EDMD_outputs.mode_indices_in_original(:);
+    prep.selected_mode_idx_in_original = source_mode_indices(idx_sorted_selected);
+else
+    prep.selected_mode_idx_in_original = idx_sorted_selected(:);
+end
 prep.selected_mode_mask_in_original = selected_mode_mask;
 prep.evalues_discrete = evalues_selected(:);
 prep.evalues_bilinear = evalues_bilinear;
@@ -683,6 +689,8 @@ td_cfg.time_axis = prep.time_axis;
 td_cfg.dt_source = prep.dt_source;
 td_cfg.mode_index = result.input.mode_index;
 td_cfg.selected_mode_idx_in_original = prep.selected_mode_idx_in_original;
+td_cfg.evalues_discrete = prep.evalues_discrete;
+td_cfg.evalues_continuous = prep.evalues_bilinear;
 
 if ~isfield(td_cfg, 'title') || isempty(td_cfg.title)
     td_cfg.title = sprintf('%s Thresholded Eigenfunction Density', ...
@@ -725,6 +733,7 @@ td_summary.params = D.params;
 td_summary.summary = D.summary;
 td_summary.artifacts = D.artifacts;
 td_summary.threshold_by_mode = D.threshold_by_mode;
+td_summary.mode_metadata = D.mode_metadata;
 td_summary.density_size = size(D.density_time_by_mode);
 td_summary.t_range = [D.t_centers(1), D.t_centers(end)];
 td_summary.n_windows = numel(D.t_centers);
@@ -793,6 +802,12 @@ end
 td_cfg.time_axis = prep.time_axis;
 td_cfg.dt_source = prep.dt_source;
 td_cfg.component_index = (1:size(result.core.temporal_components_time_by_comp, 2)).';
+td_cfg.source_evalues_discrete = prep.evalues_discrete;
+td_cfg.source_evalues_continuous = prep.evalues_bilinear;
+td_cfg.selected_mode_idx_in_original = prep.selected_mode_idx_in_original;
+if isfield(result.core, 'mode_weights_mode_by_comp')
+    td_cfg.mode_weights_mode_by_comp = result.core.mode_weights_mode_by_comp;
+end
 
 if ~isfield(td_cfg, 'title') || isempty(td_cfg.title)
     td_cfg.title = sprintf('%s Thresholded Component Density', ...
@@ -816,6 +831,7 @@ td_summary.summary = D.summary;
 td_summary.artifacts = D.artifacts;
 td_summary.threshold_by_component = D.threshold_by_component;
 td_summary.component_index = D.component_index;
+td_summary.component_timescale_metadata = D.component_timescale_metadata;
 td_summary.density_size = size(D.density_time_by_component);
 td_summary.t_range = [D.t_centers(1), D.t_centers(end)];
 td_summary.n_windows = numel(D.t_centers);

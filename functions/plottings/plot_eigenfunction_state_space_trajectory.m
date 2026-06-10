@@ -80,6 +80,7 @@ plot_info.downsample_step_estimate = downsample_info.step_estimate;
 plot_info.requested_downsample_step = downsample_info.requested_step;
 plot_info.max_plot_points_applied = downsample_info.cap_applied;
 plot_info.component_source = source_name;
+plot_info.graphics_mode = plot_cfg.render_mode;
 plot_info.save_path = '';
 
 if plot_cfg.save_figure
@@ -134,6 +135,22 @@ end
 
 if ~isfield(plot_cfg, 'line_width') || isempty(plot_cfg.line_width)
     plot_cfg.line_width = 1.15;
+end
+
+if ~isfield(plot_cfg, 'render_mode') || isempty(plot_cfg.render_mode)
+    plot_cfg.render_mode = 'scatter';
+end
+plot_cfg.render_mode = lower(char(string(plot_cfg.render_mode)));
+if ~any(strcmp(plot_cfg.render_mode, {'scatter', 'surface'}))
+    error('plot_cfg.render_mode must be ''scatter'' or ''surface''.');
+end
+
+if ~isfield(plot_cfg, 'scatter_marker_size') || isempty(plot_cfg.scatter_marker_size)
+    plot_cfg.scatter_marker_size = 10;
+end
+
+if ~isfield(plot_cfg, 'scatter_alpha') || isempty(plot_cfg.scatter_alpha)
+    plot_cfg.scatter_alpha = 0.84;
 end
 
 if ~isfield(plot_cfg, 'downsample_step') || isempty(plot_cfg.downsample_step)
@@ -266,14 +283,32 @@ end
 
 
 function local_plot_colored_trajectory(ax, x, y, z, c, plot_cfg)
-surface(ax, ...
-    [x.'; x.'], ...
-    [y.'; y.'], ...
-    [z.'; z.'], ...
-    [c.'; c.'], ...
-    'FaceColor', 'none', ...
-    'EdgeColor', 'interp', ...
-    'LineWidth', plot_cfg.line_width);
+switch plot_cfg.render_mode
+    case 'scatter'
+        h = scatter3(ax, x, y, z, plot_cfg.scatter_marker_size, c, 'filled');
+        h.MarkerEdgeColor = 'none';
+        local_apply_marker_alpha(h, plot_cfg.scatter_alpha);
+
+    case 'surface'
+        surface(ax, ...
+            [x.'; x.'], ...
+            [y.'; y.'], ...
+            [z.'; z.'], ...
+            [c.'; c.'], ...
+            'FaceColor', 'none', ...
+            'EdgeColor', 'interp', ...
+            'LineWidth', plot_cfg.line_width);
+end
+end
+
+
+function local_apply_marker_alpha(h, alpha_value)
+if isprop(h, 'MarkerFaceAlpha')
+    h.MarkerFaceAlpha = alpha_value;
+end
+if isprop(h, 'MarkerEdgeAlpha')
+    h.MarkerEdgeAlpha = alpha_value;
+end
 end
 
 

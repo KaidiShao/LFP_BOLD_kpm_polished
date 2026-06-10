@@ -49,6 +49,10 @@ def import_solver(solver_name, search_dirs=None):
         'edmd': ['solver_edmd'],
         'resdmd': ['solver_resdmd'],
         'resdmd_batch': ['solver_resdmd_batch3', 'solver_resdmd_batch2', 'solver_resdmd_batch'],
+        'resdmd_batch_mixedprobe': ['solver_resdmd_batch3_mixedprobe'],
+        'resdmd_batch_mixedgpu': ['solver_resdmd_batch3_mixedgpu'],
+        'resdmd_batch4': ['solver_resdmd_batch4'],
+        'resdmd_batch_static': ['solver_resdmd_batch3_static_target'],
         'resdmd2': ['solver_resdmd2'],
         'resdmd_torch': ['solver_resdmd_torch_gpu7']
     }
@@ -135,23 +139,48 @@ def remove_checkpoint(checkpoint_filepath):
         print(f"No checkpoint directory found at: {checkpoint_filepath}")
 
 
-def transfer_data_format(data, train_ratio=0.7):
-    X = data[0:-1, :]
-    Y = data[1:, :]
+class IndexedRowsView:
+    """Array-like view that materializes rows from a base matrix on demand."""
 
-    len_all = X.shape[0]
+    def __init__(self, data, row_indices, name=None):
+        self.data = data
+        self.row_indices = np.asarray(row_indices, dtype=np.int64).reshape(-1)
+        self.name = str(name or "indexed_rows")
+        self.shape = (int(self.row_indices.size), int(data.shape[1]))
+        self.dtype = getattr(data, "dtype", None)
 
-    np.random.seed(100)
-    random_indices = np.random.permutation(len_all)
+    def __len__(self):
+        return self.shape[0]
+
+    def __getitem__(self, key):
+        if isinstance(key, tuple):
+            row_key, col_key = key
+        else:
+            row_key, col_key = key, slice(None)
+        resolved_rows = self.row_indices[row_key]
+        return self.data[resolved_rows, col_key]
+
+    def get_rows(self, local_indices):
+        local_indices = np.asarray(local_indices, dtype=np.int64).reshape(-1)
+        return self.data[self.row_indices[local_indices], :]
+
+
+def transfer_data_format(data, train_ratio=0.7, seed=100):
+    len_all = int(data.shape[0] - 1)
+    valid_idx_x = np.arange(len_all, dtype=np.int64)
+    valid_idx_y = valid_idx_x + 1
+
+    rng = np.random.default_rng(seed)
+    random_indices = rng.permutation(len_all)
 
     train_indices = random_indices[:int(train_ratio * len_all)]
     test_indices = random_indices[int(train_ratio * len_all):]
 
-    data_x_train = X[train_indices, :]
-    data_x_valid = X[test_indices, :]
+    data_x_train = IndexedRowsView(data, valid_idx_x[train_indices], name="train_x")
+    data_x_valid = IndexedRowsView(data, valid_idx_x[test_indices], name="valid_x")
 
-    data_y_train = Y[train_indices, :]
-    data_y_valid = Y[test_indices, :]
+    data_y_train = IndexedRowsView(data, valid_idx_y[train_indices], name="train_y")
+    data_y_valid = IndexedRowsView(data, valid_idx_y[test_indices], name="valid_y")
 
     data_train = [data_x_train, data_y_train]
     data_valid = [data_x_valid, data_y_valid]
@@ -211,9 +240,7 @@ def transfer_data_format_session_aware(
         matlab_indexing=matlab_indexing,
     )
 
-    X = data[valid_idx_x, :]
-    Y = data[valid_idx_y, :]
-    len_all = X.shape[0]
+    len_all = int(valid_idx_x.shape[0])
 
     rng = np.random.default_rng(seed)
     random_indices = rng.permutation(len_all)
@@ -222,8 +249,14 @@ def transfer_data_format_session_aware(
     train_indices = random_indices[:split_idx]
     test_indices = random_indices[split_idx:]
 
-    data_train = [X[train_indices, :], Y[train_indices, :]]
-    data_valid = [X[test_indices, :], Y[test_indices, :]]
+    data_train = [
+        IndexedRowsView(data, valid_idx_x[train_indices], name="train_x"),
+        IndexedRowsView(data, valid_idx_y[train_indices], name="train_y"),
+    ]
+    data_valid = [
+        IndexedRowsView(data, valid_idx_x[test_indices], name="valid_x"),
+        IndexedRowsView(data, valid_idx_y[test_indices], name="valid_y"),
+    ]
 
     snapshot_metadata = {
         "valid_idx_x": valid_idx_x,

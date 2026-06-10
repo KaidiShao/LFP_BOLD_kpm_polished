@@ -1,6 +1,35 @@
 results/
 analysis_outputs/
 scripts/analysis_outputs/
+tmp/
+MathWorks/
+
+# OS/editor noise.
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# Local runtime/cache files.
+.pytest_cache/
+.ipynb_checkpoints/
+*.asv
+*.log
+*.out
+*.err
+*_log.txt
+matlab_*_probe.txt
+tmp_*.pyc.*
+
+# Accidental Windows absolute-path spillover directories.
+/D*/Onedrive/
+/D*Onedrive*/
+/E*DataPons_processed*/
+
 tests/test24_detection_alignment_checks/outputs_*/
 tests/tmp_event_compare_*/
 *_pre_reskoopnet_qc_summary*.png

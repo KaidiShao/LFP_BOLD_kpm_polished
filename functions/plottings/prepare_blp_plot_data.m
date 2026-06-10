@@ -90,7 +90,7 @@ end
 function plot_settings = local_resolve_plot_settings(cfg)
 plot_settings = struct();
 plot_settings.trace_scale = 0.18;
-plot_settings.trace_clip = 4;
+plot_settings.trace_clip = Inf;
 plot_settings.within_gap = 1.4;
 plot_settings.between_gap = 2.2;
 plot_settings.trace_linewidth = 0.4;
@@ -101,9 +101,8 @@ if isfield(cfg, 'plot')
     if isfield(cfg.plot, 'trace_scale')
         plot_settings.trace_scale = cfg.plot.trace_scale;
     end
-    if isfield(cfg.plot, 'trace_clip')
-        plot_settings.trace_clip = cfg.plot.trace_clip;
-    end
+    % Plot traces are no longer amplitude-clipped.  Keep the field for
+    % backward compatibility with older callers, but ignore cfg.plot.trace_clip.
     if isfield(cfg.plot, 'within_gap')
         plot_settings.within_gap = cfg.plot.within_gap;
     end

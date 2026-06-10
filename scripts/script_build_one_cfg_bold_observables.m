@@ -37,13 +37,6 @@ close all force;
 
 cfg_name = char(string(cfg_name));
 
-if ~exist('bold_output_root', 'var') || isempty(bold_output_root)
-    bold_output_root = fullfile(io_project.get_project_processed_root(), 'bold_observables');
-end
-if exist(bold_output_root, 'dir') ~= 7
-    mkdir(bold_output_root);
-end
-
 if ~exist('observable_modes', 'var') || isempty(observable_modes)
     observable_modes = {'eleHP', 'HP', 'roi_mean', 'slow_band_power', ...
         'svd', 'HP_svd100', 'global_svd100'};
@@ -84,16 +77,21 @@ cfg = feval(cfg_fun);
 cfg = local_apply_bold_defaults(cfg);
 role_map = local_require_bold_role_map(cfg);
 
+if ~exist('bold_output_root', 'var') || isempty(bold_output_root)
+    dataset_out_dir = io_project.get_pipeline_stage_dir( ...
+        io_project.get_project_processed_root(), cfg.file_stem, 3, 'bold_observables');
+else
+    dataset_out_dir = fullfile(bold_output_root, cfg.dataset_id);
+end
+if exist(dataset_out_dir, 'dir') ~= 7
+    mkdir(dataset_out_dir);
+end
+
 fprintf('Building BOLD observables for %s\n', cfg.dataset_id);
 fprintf('BOLD roits folder:\n  %s\n', fullfile(cfg.raw_data_root, cfg.bold.data_subfolder));
 fprintf('Configured BOLD ROI role map:\n');
 fprintf('  eleHP -> %s\n', role_map.elehp);
 fprintf('  HP    -> %s\n', role_map.hp);
-
-dataset_out_dir = fullfile(bold_output_root, cfg.dataset_id);
-if exist(dataset_out_dir, 'dir') ~= 7
-    mkdir(dataset_out_dir);
-end
 
 bold_outputs = struct([]);
 
@@ -184,7 +182,7 @@ switch lower(mode_name)
         selected_region_names = {};
     case 'slow_band_power'
         selected_region_names = {role_map.elehp, role_map.hp};
-    case {'svd', 'global_svd100'}
+    case {'svd', 'global_svd100', 'gsvd100_ds'}
         selected_region_names = {};
     otherwise
         error('Unsupported observable mode: %s', mode_name);
@@ -200,14 +198,14 @@ params.observable_branch = mode_name;
 
 if ismember(lower(mode_name), {'elehp', 'hp'})
     params.mode = 'identity';
-elseif ismember(lower(mode_name), {'hp_svd100', 'global_svd100'})
+elseif ismember(lower(mode_name), {'hp_svd100', 'global_svd100', 'gsvd100_ds'})
     params.mode = 'svd';
 else
     params.mode = mode_name;
 end
 
 params.precision = save_precision;
-if ismember(lower(mode_name), {'hp_svd100', 'global_svd100'})
+if ismember(lower(mode_name), {'hp_svd100', 'global_svd100', 'gsvd100_ds'})
     params.n_components = n_svd100_components;
 else
     params.n_components = n_svd_components;
@@ -216,6 +214,12 @@ end
 if strcmpi(mode_name, 'slow_band_power')
     params.include_raw = true;
     params.band_power_transform = 'power';
+elseif strcmpi(mode_name, 'gsvd100_ds')
+    params.dedup_by_coords = true;
+    params.session_center = true;
+    params.session_detrend = false;
+    params.variable_zscore = false;
+    params.explained_use_total_variance = true;
 end
 end
 

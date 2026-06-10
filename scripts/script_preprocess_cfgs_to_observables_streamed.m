@@ -167,6 +167,7 @@ for i = 1:numel(cfg_names)
     params.high_group_size = high_group_size;
     params.chunk_size = chunk_size;
     params.precision = save_precision;
+    params.force_recompute = force_recompute;
 
     for j = 1:numel(dict_modes)
         params.spec_mode = dict_modes{j};

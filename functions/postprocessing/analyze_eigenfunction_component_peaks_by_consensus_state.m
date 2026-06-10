@@ -35,7 +35,7 @@ if isempty(source_consensus_file) && isfield(C, 'save_file')
     source_consensus_file = C.save_file;
 end
 
-[components, component_source] = local_get_component_series(result, params);
+[components, component_source] = local_get_component_series(result, params, C);
 [state_code_by_traj, state_time_idx] = local_align_state_codes( ...
     C.state_code_by_time(:), size(components, 1), params.state_start_idx);
 
@@ -126,6 +126,34 @@ end
 
 if ~isfield(params, 'peak_mode') || isempty(params.peak_mode)
     params.peak_mode = 'max';
+end
+
+if ~isfield(params, 'lfp_activity_transform') || isempty(params.lfp_activity_transform)
+    params.lfp_activity_transform = 'none';
+end
+if ~isfield(params, 'lfp_activity_window_policy') || isempty(params.lfp_activity_window_policy)
+    params.lfp_activity_window_policy = 'none';
+end
+if ~isfield(params, 'value_transform') || isempty(params.value_transform)
+    params.value_transform = 'abs';
+end
+if ~isfield(params, 'envelope_enable') || isempty(params.envelope_enable)
+    params.envelope_enable = false;
+end
+if ~isfield(params, 'envelope_policy') || isempty(params.envelope_policy)
+    params.envelope_policy = 'none';
+end
+if ~isfield(params, 'envelope_alpha') || isempty(params.envelope_alpha)
+    params.envelope_alpha = 0.35;
+end
+if ~isfield(params, 'envelope_min_window_sec') || isempty(params.envelope_min_window_sec)
+    params.envelope_min_window_sec = 0.03;
+end
+if ~isfield(params, 'envelope_max_window_sec') || isempty(params.envelope_max_window_sec)
+    params.envelope_max_window_sec = 1.0;
+end
+if ~isfield(params, 'envelope_fallback_window_sec') || isempty(params.envelope_fallback_window_sec)
+    params.envelope_fallback_window_sec = 0.10;
 end
 
 if ~isfield(params, 'baseline_mode') || isempty(params.baseline_mode)
@@ -229,7 +257,7 @@ end
 end
 
 
-function [components, source_name] = local_get_component_series(result, params)
+function [components, source_name] = local_get_component_series(result, params, C)
 components = result.core.temporal_components_time_by_comp;
 source_name = 'raw';
 
@@ -256,6 +284,86 @@ switch lower(params.component_source)
 
     otherwise
         error('Unknown params.component_source = %s.', params.component_source);
+end
+
+[components, activity_source] = local_apply_activity_transform( ...
+    components, result, C, params);
+if ~isempty(activity_source)
+    source_name = sprintf('%s_%s', source_name, activity_source);
+end
+end
+
+
+function [components, source_name] = local_apply_activity_transform( ...
+        components, result, C, params)
+source_name = '';
+activity_transform = lower(char(string(params.lfp_activity_transform)));
+if isempty(activity_transform) || any(strcmp(activity_transform, {'none', 'raw', 'as_is'})) && ...
+        ~logical(params.envelope_enable)
+    return;
+end
+
+activity_params = params;
+activity_params.lfp_activity_transform = params.lfp_activity_transform;
+activity_params.lfp_activity_window_policy = params.lfp_activity_window_policy;
+activity_params.value_transform = params.value_transform;
+
+component_meta = local_component_timescale_metadata(result);
+if ~isempty(component_meta) && istable(component_meta) && ...
+        ismember('weighted_timescale_sec_median', component_meta.Properties.VariableNames)
+    tau = double(component_meta.weighted_timescale_sec_median(:));
+    if numel(tau) == size(components, 2)
+        win_sec = double(params.envelope_alpha) .* tau;
+        invalid = ~isfinite(win_sec) | win_sec <= 0;
+        win_sec(invalid) = double(params.envelope_fallback_window_sec);
+        win_sec = max(double(params.envelope_min_window_sec), ...
+            min(double(params.envelope_max_window_sec), win_sec));
+        activity_params.envelope_window_sec_by_mode = win_sec;
+    end
+end
+
+session_info = local_peak_session_info(C, params.state_start_idx, size(components, 1));
+dt = local_result_dt(result);
+[components, activity_meta] = compute_eigenfunction_activity( ...
+    components, dt, activity_params, session_info);
+source_name = char(string(activity_meta.activity_transform));
+end
+
+
+function meta = local_component_timescale_metadata(result)
+meta = [];
+if isfield(result, 'dimred_thresholded_density') && ...
+        isstruct(result.dimred_thresholded_density) && ...
+        isfield(result.dimred_thresholded_density, 'component_timescale_metadata')
+    meta = result.dimred_thresholded_density.component_timescale_metadata;
+end
+end
+
+
+function session_info = local_peak_session_info(C, state_start_idx, T)
+session_info = struct();
+session_info.start_idx = 1;
+session_info.end_idx = T;
+if isfield(C, 'session_start_idx') && isfield(C, 'session_end_idx') && ...
+        ~isempty(C.session_start_idx) && ~isempty(C.session_end_idx)
+    starts = double(C.session_start_idx(:)) - double(state_start_idx) + 1;
+    ends = double(C.session_end_idx(:)) - double(state_start_idx) + 1;
+    starts = max(1, starts);
+    ends = min(T, ends);
+    valid = ends >= starts;
+    if any(valid)
+        session_info.start_idx = starts(valid);
+        session_info.end_idx = ends(valid);
+    end
+end
+end
+
+
+function dt = local_result_dt(result)
+dt = [];
+if isfield(result, 'input') && isstruct(result.input) && ...
+        isfield(result.input, 'dt') && ~isempty(result.input.dt)
+    dt = double(result.input.dt);
 end
 end
 

@@ -172,6 +172,8 @@ end
 
 function [obs, info, model] = build_svd_observables(X, D, params)
 X = double(X);
+[X, pre_svd, input_variable_labels] = local_prepare_svd_input(X, D, params);
+
 if params.center
     mu = mean(X, 1, 'omitnan');
     Xc = X - mu;
@@ -188,9 +190,13 @@ end
 [U, S, V] = svd(Xc, 'econ');
 coeff = V(:, 1:n_comp);
 score = U(:, 1:n_comp) * S(1:n_comp, 1:n_comp);
-latent = diag(S).^2 / max(size(Xc, 1) - 1, 1);
-latent = latent(1:n_comp);
-explained = 100 * latent / sum(latent);
+all_latent = diag(S).^2 / max(size(Xc, 1) - 1, 1);
+latent = all_latent(1:n_comp);
+if isfield(params, 'explained_use_total_variance') && params.explained_use_total_variance
+    explained = 100 * latent / sum(all_latent);
+else
+    explained = 100 * latent / sum(latent);
+end
 obs = score;
 
 observable_idx = (1:n_comp).';
@@ -211,8 +217,68 @@ model.mu = mu;
 model.coeff = coeff;
 model.latent = latent;
 model.explained = explained;
+if isfield(params, 'explained_use_total_variance') && params.explained_use_total_variance
+    model.retained_explained = sum(explained);
+end
+if ~isempty(fieldnames(pre_svd))
+    model.pre_svd = pre_svd;
+end
+if ~isempty(input_variable_labels)
+    model.input_variable_labels = input_variable_labels;
+end
+end
+
+function [X, pre_svd, input_variable_labels] = local_prepare_svd_input(X, D, params)
+pre_svd = struct();
+original_n_variables = size(X, 2);
+keep_variable_idx = (1:original_n_variables).';
+
+if isfield(params, 'dedup_by_coords') && params.dedup_by_coords
+    if ~isfield(D, 'coords') || isempty(D.coords) || size(D.coords, 1) ~= original_n_variables
+        error('params.dedup_by_coords requires D.coords with one row per BOLD variable.');
+    end
+    [~, ia] = unique(D.coords, 'rows', 'stable');
+    keep_variable_idx = sort(ia(:));
+    X = X(:, keep_variable_idx);
+end
+
+if isfield(params, 'session_center') && params.session_center
+    for i_sess = 1:numel(D.session_start_idx)
+        idx = D.session_start_idx(i_sess):D.session_end_idx(i_sess);
+        X(idx, :) = X(idx, :) - mean(X(idx, :), 1, 'omitnan');
+    end
+end
+
+if isfield(params, 'session_detrend') && params.session_detrend
+    for i_sess = 1:numel(D.session_start_idx)
+        idx = D.session_start_idx(i_sess):D.session_end_idx(i_sess);
+        X(idx, :) = detrend(X(idx, :), 'linear');
+    end
+end
+
+if isfield(params, 'variable_zscore') && params.variable_zscore
+    sigma = std(X, 0, 1, 'omitnan');
+    sigma(~isfinite(sigma) | sigma == 0) = 1;
+    X = X ./ sigma;
+end
+
+input_variable_labels = {};
 if isfield(D, 'variable_labels')
-    model.input_variable_labels = D.variable_labels;
+    input_variable_labels = D.variable_labels;
+    if numel(input_variable_labels) == original_n_variables
+        input_variable_labels = input_variable_labels(keep_variable_idx);
+    end
+end
+
+if isfield(params, 'dedup_by_coords') || isfield(params, 'session_center') || ...
+        isfield(params, 'session_detrend') || isfield(params, 'variable_zscore')
+    pre_svd.original_n_variables = original_n_variables;
+    pre_svd.keep_variable_idx = keep_variable_idx;
+    pre_svd.dedup_by_coords = isfield(params, 'dedup_by_coords') && params.dedup_by_coords;
+    pre_svd.session_center = isfield(params, 'session_center') && params.session_center;
+    pre_svd.session_detrend = isfield(params, 'session_detrend') && params.session_detrend;
+    pre_svd.variable_zscore = isfield(params, 'variable_zscore') && params.variable_zscore;
+    pre_svd.dedup_removed_variables = original_n_variables - numel(keep_variable_idx);
 end
 end
 

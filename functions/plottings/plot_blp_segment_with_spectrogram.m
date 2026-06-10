@@ -98,11 +98,22 @@ show_consensus = isfield(base_plot_cache, 'show_consensus') && base_plot_cache.s
 
 hold(ax, 'on');
 
-y_min = ytick_pos(1) - 1;
-y_max = ytick_pos(end) + 1;
+[y_min, y_max] = local_get_raw_panel_y_limits(base_plot_cache, ytick_pos);
 
 if show_consensus && ~isempty(base_plot_cache.consensus_windows)
     local_plot_consensus_windows(ax, base_plot_cache, y_min, y_max, idx_plot_1, t_seg);
+end
+
+
+function [y_min, y_max] = local_get_raw_panel_y_limits(base_plot_cache, ytick_pos)
+if isfield(base_plot_cache, 'trace_y_min') && isfield(base_plot_cache, 'trace_y_max') && ...
+        isfinite(base_plot_cache.trace_y_min) && isfinite(base_plot_cache.trace_y_max)
+    y_min = base_plot_cache.trace_y_min;
+    y_max = base_plot_cache.trace_y_max;
+else
+    y_min = ytick_pos(1) - 1;
+    y_max = ytick_pos(end) + 1;
+end
 end
 
 for c = 1:n_channels
@@ -160,8 +171,7 @@ for i = 1:numel(consensus_windows)
         patch_color, ...
         'FaceAlpha', consensus_face_alpha, ...
         'EdgeColor', patch_color, ...
-        'LineWidth', 1.0, ...
-        'Clipping', 'on');
+        'LineWidth', 1.0);
 end
 end
 

@@ -26,7 +26,7 @@ cfg.sessions(1).include = true;
 cfg.sessions(1).selected_channels = cfg.channels.selected_all;
 cfg.sessions(1).notes = 'polar'; % polar visual stimulation
 
-cfg.sessions(2).session_id = 6:25;
+cfg.sessions(2).session_id = 6:20;
 cfg.sessions(2).include = true;
 cfg.sessions(2).selected_channels = cfg.channels.selected_all;
 cfg.sessions(2).notes = 'spont'; % spontaneous
