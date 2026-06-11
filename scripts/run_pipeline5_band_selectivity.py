@@ -5,7 +5,8 @@ This wrapper turns the SOP into a single runnable entry point:
 
 1. Build P2-band event response labels for P5 dimred components.
 2. Generate the required P5 band-selectivity summary figures.
-3. Generate component-pair diagnostic plates.
+3. Generate component-pair diagnostic plates for method-k settings that have
+   both strict theta-like and RG-like candidates.
 4. Optionally generate paired top-window validation sheets.
 5. Optionally generate P2/P5 top-30 window QC sheets.
 
@@ -27,9 +28,10 @@ from pathlib import Path
 
 DEFAULT_CONDITION = "complex_split_projected_vlambda_standardize"
 DEFAULT_LABEL_SUFFIX = "p5_p2_band_event_response_v2_selective_envelope_20260528"
-DEFAULT_TRANSFORMS = ["abs", "adaptive_envelope"]
+AVAILABLE_TRANSFORMS = ["abs", "adaptive_envelope"]
+DEFAULT_TRANSFORMS = ["adaptive_envelope"]
 DEFAULT_METHODS = ["svd", "nmf", "mds", "umap"]
-DEFAULT_KS = list(range(3, 9))
+DEFAULT_KS = list(range(3, 17))
 
 
 @dataclass
@@ -171,7 +173,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--condition", default=DEFAULT_CONDITION)
     parser.add_argument("--workspace", default="/mnt/d/Onedrive/ICPBR/Alberta/koopman_events/LFP_BOLD_kpm_polished")
     parser.add_argument("--processed-root", default="/mnt/e/DataPons_processed")
-    parser.add_argument("--transforms", nargs="+", default=DEFAULT_TRANSFORMS, choices=DEFAULT_TRANSFORMS)
+    parser.add_argument("--transforms", nargs="+", default=DEFAULT_TRANSFORMS, choices=AVAILABLE_TRANSFORMS)
     parser.add_argument("--component-counts", nargs="+", type=int, default=DEFAULT_KS)
     parser.add_argument("--ribbons", nargs="+", default=["sem"], choices=["sem", "std", "iqr", "none"])
     parser.add_argument("--summary-only", action="store_true", help="Only generate minimal label summary figures.")

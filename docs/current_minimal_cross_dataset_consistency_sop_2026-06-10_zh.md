@@ -25,9 +25,26 @@ roi_mean BOLD deconv_efun 更像 fast intrinsic perturbation readout。
 P8/P10 中，deconv_efun 比 efun 更倾向于和
 ripple_gamma_no_theta / RG-like fast subprocess coupling。
 
+P8/P10 density-source competition 进一步要求：
+dimred BLP efun density 和 raw BLP efun density
+应该比 simple event_density 更能解释 BOLD efun/deconv_efun；
+如果 dimred density 还强于 raw density，
+才支持 P5 dimred subprocess representation 有额外价值。
+
 P8 selected BOLD mode eigenvalue/timescale 进一步显示：
 efun selected modes 更慢、更靠前、更接近单位圆；
 deconv_efun selected modes 更快、更靠后。
+
+ROI 层面是必要的 spatial sanity / interpretation layer：
+需要检查 efun×theta-like 和 deconv_efun×RG-like
+选中的 BOLD modes 是否有跨 dataset 相对稳定的 signed ROI footprint，
+以及 real_mean ROI、top positive/negative ROI set、selected mode overlap
+是否支持 efun/deconv 两类 readout 的空间解释。
+
+当前 ROI 结论应谨慎表述：
+magnitude/mean_abs ROI 不足以证明 theta/RG 是两个空间分离网络；
+real_mean signed ROI 和 selected-mode overlap 更适合用来判断
+efun vs deconv_efun 是否对应不同 BOLD spatial readout。
 ```
 
 当前最稳的生物学表述是：
@@ -36,7 +53,10 @@ deconv_efun selected modes 更快、更靠后。
 BLP dimred density 中存在 theta-like slow state 和 RG-like fast subprocess；
 BOLD efun 更像 slow/state readout；
 BOLD deconv_efun 更像 fast intrinsic perturbation readout；
-deconv branch preferentially couples to RG-no-theta subprocess。
+deconv branch preferentially couples to RG-no-theta subprocess；
+dimred/raw BLP efun density 比 simple event density 更能解释 BOLD coupling；
+ROI 层面需要进一步证明这些 selected BOLD modes
+是否对应稳定、可解释的 signed spatial footprint。
 ```
 
 可以作为 working hypothesis 联系到：
@@ -66,6 +86,11 @@ P5 label:
 
 BOLD observable:
     roi_mean
+
+ROI profile mode:
+    real_mean
+    mean_abs 只作为 legacy / QC
+    top positive/negative ROI 从 real_mean 派生，不作为独立 condition
 
 BOLD feature family:
     efun
@@ -128,6 +153,25 @@ P7 roi_mean BOLD_POST stale or not best checkpoint
 
 ### Gate 1: P5 subprocess gate
 
+正式代码入口：
+
+```text
+scripts/pipeline5_sop/run_p5_sop.py
+```
+
+默认口径：
+
+```text
+condition = complex_split_projected_vlambda_standardize
+transform = adaptive_envelope
+k = 03:16
+strict labels = P2 theta/gamma/ripple band-event selectivity
+```
+
+默认只跑 P5 band-selectivity 主图、P5-pair-pass diagnostic plate，以及可选的
+theta/RG density correlation SOP 图；不默认跑 abs sensitivity、top30 window QC
+或 consensus trajectory showcase。
+
 问题：
 
 ```text
@@ -150,20 +194,19 @@ P5-pair-pass 的 `dataset x method_k`。
 主图：
 
 ```text
-00_strict_label_counts_abs_vs_adaptive_envelope.png
-04_<transform>_strict_theta_vs_ripple_gamma_effect_scatter.png
-02_<transform>_strict_label_grid_by_method_k.png
-03_<transform>_strict_label_composition_by_method_k.png
-05_<transform>_strict_two_subprocess_candidate_map.png
+04_adaptive_envelope_strict_theta_vs_ripple_gamma_effect_scatter.png
+02_adaptive_envelope_strict_label_grid_by_method_k.png
+03_adaptive_envelope_strict_label_composition_by_method_k.png
+05_adaptive_envelope_strict_two_subprocess_candidate_map.png
 ```
 
 解释图：
 
 ```text
-selected component peri-event mean by band
 method-k diagnostic plate:
     left: theta/RG selected components' event-aligned mean +/- ribbon
     right: top windows with theta-like and RG-like traces plus P2 event rugs
+    scope: adaptive_envelope only, P5-pair-pass method-k only
 ```
 
 QC / appendix：
@@ -202,39 +245,24 @@ theta_selective density 和 ripple_gamma_no_theta density
 是不是只是同一个 trace 的不同标签？
 ```
 
-主图 / 表：
+默认 SOP 只保留一张主图：
 
 ```text
-canonical theta/RG density correlation
-all theta/RG pair density correlation
-session-demeaned density correlation
+dataset x method-k canonical theta/RG density correlation heatmap
 ```
 
-脚本：
+优先看 session-demeaned correlation。接近 0 表示 theta-like 和 RG-no-theta
+density 在时间上相对独立；绝对值很高说明该 dataset/method-k 的两个 labeled
+subprocess 可能没有真正分开。
+
+正式代码入口：
 
 ```text
-scripts/analyze_p5_theta_rg_density_correlation.py
+scripts/pipeline5_sop/run_p5_sop.py --refresh-density-correlation
+scripts/pipeline5_sop/plot_theta_rg_density_correlation.py
 ```
 
-结果目录：
-
-```text
-results/standardized_csplit_k03_k16_all_current_20260607/
-    p5_theta_rg_density_correlation/
-
-E:\DataPons_processed\summary_figures\pipeline11_current_analysis_summary\
-    standardized_csplit_k03_k16_all_current_20260607\
-        p5_theta_rg_density_correlation\
-```
-
-解释：
-
-```text
-如果 theta/RG density 大多低相关，说明 P5 层面的 subprocess split 是实质性的。
-如果某个 dataset theta/RG density 高相关，它只能作为 weak / ambiguous。
-```
-
-### Gate 2: P8/P10 coupling preference
+### Gate 2: P8/P10 coupling preference and density-source competition
 
 问题：
 
@@ -242,6 +270,12 @@ E:\DataPons_processed\summary_figures\pipeline11_current_analysis_summary\
 在 P5-pair-pass method-k 中，
 roi_mean deconv_efun 的 top xcorr hits
 是否比 roi_mean efun 更偏向 ripple_gamma_no_theta？
+
+这种 coupling 是否主要来自 BLP efun-derived density，
+而不是 simple event_density？
+
+dimred density 是否比 raw efun density 更强，
+从而说明 P5 dimred subprocess representation 有额外价值？
 ```
 
 主图：
@@ -249,7 +283,9 @@ roi_mean deconv_efun 的 top xcorr hits
 ```text
 roi_mean x efun/deconv_efun x topN strict-label composition
 roi_mean deconv-vs-efun RG enrichment by topN
-roi_mean x efun/deconv_efun density-source competition
+roi_mean x efun/deconv_efun x density-source competition
+event density vs raw efun density vs dimred efun density by topN
+event/raw/dimred density winner map by dataset and feature family
 ```
 
 主指标：
@@ -265,7 +301,13 @@ matched-unit win rate:
     matched context 中 deconv RG fraction > efun RG fraction 的比例
 
 density source competition:
-    dimred density vs raw density vs event density
+    event density vs raw efun density vs dimred efun density
+
+dimred advantage:
+    dimred density hit fraction - raw density hit fraction
+
+efun-derived advantage:
+    (raw density + dimred density) hit fraction - event density hit fraction
 ```
 
 当前解释规则：
@@ -280,8 +322,16 @@ pooled delta > 0 且 matched-unit win rate > 0.5:
 event_density dominant:
     不支持当前 dimred BLP subprocess 叙事
 
+raw density > event density:
+    支持 BLP eigenfunction activity 比 simple event count 更有信息
+
 dimred density > raw density:
     支持 P5 subprocess representation 有额外价值
+
+dimred density > raw density >> event density:
+    最支持当前叙事：
+    BLP eigenfunction activity 有效，且 P5 dimred subprocess representation
+    比 raw single-efun density 更接近 BOLD coupling target
 ```
 
 当前已观察到的方向：
@@ -420,12 +470,21 @@ slow/state readout vs fast perturbation readout 的主证据。
 ### Gate 4: ROI spatial sanity
 
 ROI 现在只作为 spatial sanity / falsification，不再作为主证据。
+ROI 主线口径只用 `real_mean`。
+
+详细理由见：
+
+```text
+docs/roi_real_mean_mainline_rationale_2026-06-10_zh.md
+```
 
 当前关键结论：
 
 ```text
 mean_abs ROI profile 往往把差异抹平。
-signed real / positive / negative ROI profile 能看到更多差异。
+real_mean signed ROI profile 更适合保留 spatial polarity。
+positive / negative ROI 只作为 real_mean 的 top-ROI 派生展示，
+不作为独立 ROI condition。
 
 但是 ROI 差异主要反映 efun vs deconv_efun branch，
 不稳定支持 theta vs RG 本身有完全独立 spatial footprint。
@@ -439,28 +498,38 @@ scripts/analyze_roi_mean_signed_target_modes.py
 scripts/analyze_roi_mean_signed_target_pairwise.py
 ```
 
-ROI value modes：
+ROI value mode：
+
+```text
+real_mean
+```
+
+legacy / QC only:
 
 ```text
 mean_abs
-real_mean
-positive_real
-negative_real
+```
+
+derived from real_mean, not independent conditions:
+
+```text
+top positive ROI
+top negative ROI
 ```
 
 主图：
 
 ```text
-efun_theta vs deconv_RG signed ROI profile corr by topN
-efun_theta vs deconv_RG top ROI set Jaccard by topN
+efun_theta vs deconv_RG real_mean ROI profile corr by topN
+efun_theta vs deconv_RG real_mean top ROI set Jaccard by topN
 4-target pairwise ROI profile corr matrix:
     efun_theta
     efun_RG
     deconv_theta
     deconv_RG
-4-target pairwise top ROI Jaccard matrix
+4-target pairwise real_mean top ROI Jaccard matrix
 P8 selected BOLD mode exact/adjacent overlap matrix
-top positive/negative ROI labels by target
+top positive/negative ROI labels by target, derived from real_mean
 ```
 
 输出：
@@ -501,14 +570,32 @@ strict theta-vs-ripple/gamma effect scatter
 strict label grid by method-k
 strict label composition by method-k
 strict two-subprocess candidate map
+transform = adaptive_envelope only
 ```
 
 可选：
 
 ```text
-abs vs adaptive_envelope label counts
 selected method-k diagnostic plate
 P2 top30 event windows for suspicious data
+```
+
+`selected method-k diagnostic plate` 已包含 selected theta/RG component 的
+peri-event mean 和 top-window examples，因此替代 standalone
+`selected_component_perievent_mean_by_band` 作为首选解释图。
+默认只对 adaptive_envelope 且通过 P5 pair-pass 的 method-k 生成。
+`abs` 只作为 sensitivity / debugging，不进默认 SOP。
+
+展示图，不进默认 SOP：
+
+```text
+two-subprocess consensus-state trajectory
+    coordinate 1 = selected theta-like dimred component
+    coordinate 2 = selected RG-no-theta dimred component
+    coordinate 3 = residual / leftover variability / optional third component
+
+这个图只用于最后挑 1--2 个漂亮 dataset 做机制展示。
+不要默认对所有 dataset x method-k 生成，也不要用它阻塞 SOP pass/fail。
 ```
 
 ### B. 每个 dataset 的 P8 coupling 图
@@ -518,7 +605,9 @@ P2 top30 event windows for suspicious data
 ```text
 roi_mean efun/deconv_efun strict-label composition by topN
 roi_mean deconv-vs-efun RG enrichment by topN
-density-source competition by feature family
+event/raw/dimred density-source competition by feature family
+event/raw/dimred density-source competition by topN
+event/raw/dimred density winner map by dataset
 ```
 
 可选：
@@ -557,7 +646,7 @@ topN sensitivity curve:
 必画但只作为 sanity：
 
 ```text
-signed ROI profile corr:
+real_mean ROI profile corr:
     efun_theta vs deconv_RG
     top3/top5/top10/top20
 
@@ -577,7 +666,11 @@ all ROI by dataset:
     keep anatomical ROI order
     per-dataset color scale
 
-top positive / negative ROI labels by target
+top positive / negative ROI labels by target,
+derived from real_mean
+
+mean_abs legacy/QC comparison,
+only for explaining why magnitude ROI is not mainline
 ```
 
 ## 5. 历史叙事的当前状态
@@ -678,14 +771,16 @@ python scripts/run_pipeline5_band_selectivity.py ...
 /home/kdshao/anaconda3/bin/python scripts/run_minimal_new_dataset_consistency.py ...
 ```
 
-### Step 4: 生成 signed ROI / pairwise control
+### Step 4: 生成 real_mean ROI / pairwise control
 
 ```text
 /home/kdshao/anaconda3/bin/python scripts/analyze_roi_mean_signed_target_modes.py \
-    --top-ns 3 5 10 20
+    --top-ns 3 5 10 20 \
+    --roi-value-mode real_mean
 
 /home/kdshao/anaconda3/bin/python scripts/analyze_roi_mean_signed_target_pairwise.py \
-    --top-ns 3 5 10 20
+    --top-ns 3 5 10 20 \
+    --roi-value-mode real_mean
 ```
 
 ### Step 5: 生成 P8 selected BOLD mode timescale
@@ -714,7 +809,10 @@ P5-pair-pass strict 版：
 ```text
 Across datasets with a valid standardized complex-split P5 theta/RG pair,
 roi_mean BOLD deconv_efun preferentially couples to RG-no-theta dimred BLP
-density.  P8 selected-mode eigenvalue analysis further shows that efun-coupled
+density.  Density-source competition shows that BLP efun-derived densities
+(raw and especially dimred) outperform simple event density, supporting the
+added value of the P5 subprocess representation.  P8 selected-mode eigenvalue
+analysis further shows that efun-coupled
 BOLD modes are slower and closer to the unit circle, whereas deconv-coupled
 BOLD modes are faster.  This supports a working model in which BLP theta-like
 activity tracks slow/state-like BOLD readout, while RG-no-theta activity couples
@@ -726,7 +824,10 @@ to a faster intrinsic-perturbation BOLD branch.
 ```text
 在通过 standardized complex-split P5 theta/RG pair gate 的数据中，
 roi_mean BOLD deconv_efun 比 efun 更倾向于耦合 RG-no-theta dimred BLP density。
-同时，P8 selected BOLD mode eigenvalue/timescale 显示 efun 选中的 BOLD modes
+同时，event/raw/dimred density-source comparison 显示，
+BLP efun-derived density，尤其是 dimred density，比 simple event density
+更能解释 BOLD coupling，支持 P5 subprocess representation 的额外价值。
+另外，P8 selected BOLD mode eigenvalue/timescale 显示 efun 选中的 BOLD modes
 更慢、更接近单位圆，而 deconv_efun 选中的 modes 更快。
 这支持一个工作模型：theta-like BLP activity 更接近 slow/state-like BOLD readout，
 而 RG-no-theta activity 更接近 fast intrinsic-perturbation BOLD branch。

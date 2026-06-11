@@ -1,0 +1,505 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage[most]{tcolorbox}
+\usepackage{longtable}
+\usepackage{microtype}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    urlcolor=blue!60!black,
+    citecolor=blue!60!black
+}
+
+\definecolor{deepblue}{RGB}{24,64,120}
+\definecolor{softblue}{RGB}{235,245,255}
+\definecolor{softorange}{RGB}{255,246,235}
+\definecolor{softpurple}{RGB}{245,240,255}
+
+\setlist[itemize]{leftmargin=2em}
+\setlist[enumerate]{leftmargin=2em}
+
+\title{A Unified Framework for Nonlinear Local--Global Latent Dynamics,\\ Koopman Modal Signatures, and Two LFP--BOLD Projects}
+\author{Framework note}
+\date{2026-06-10}
+
+\begin{document}
+\maketitle
+
+\begin{tcolorbox}[colback=softblue,colframe=deepblue,title=Core idea]
+LFP, local BOLD, and global BOLD should not be treated as a simple feed-forward input-output chain. They are better understood as different observable readouts of a nonlinear local-global latent system. Koopman eigenfunctions transform this complex nonlinear system into interpretable modal variables, making the global gating state, pre-activation modes, global ROI maps, and loop backbones operational phenomenological modal signatures.
+\end{tcolorbox}
+
+\tableofcontents
+\newpage
+
+\section{Overview}
+
+This note summarizes the current mathematical framework connecting two related projects:
+\begin{enumerate}
+    \item \textbf{Event-related LFP subprocess $\to$ global BOLD pattern / BOLD eigenfunction residual}: how local LFP subprocesses can act as intrinsic perturbations that trigger or predict global BOLD modal innovations.
+    \item \textbf{Non-causal LFP--BOLD impulse responses / pre-activation}: why local BOLD can show apparent pre-activation relative to local LFP, and how this can be interpreted using closed-loop local-global latent dynamics and a Koopman modal representation.
+\end{enumerate}
+
+The two projects correspond to two halves of the same closed loop:
+\[
+\underbrace{u_{\mathrm{LFP}} \rightarrow x^{(g)}}_{\text{local-to-global: BOLD modal innovation}}
+\qquad\text{and}\qquad
+\underbrace{x^{(g)} \rightarrow u_{\mathrm{LFP}}}_{\text{global-to-local: pre-activation / gating}}.
+\]
+Together, they describe
+\[
+x^{(g)} \rightarrow u_{\mathrm{LFP}} \rightarrow x^{(g)},
+\]
+meaning that a global order-parameter-like state gates local hippocampal subprocesses, and local subprocesses in turn perturb or update the global BOLD network state.
+
+\section{Underlying model: a nonlinear local-global latent system}
+
+Let the latent state be decomposed into local and global components:
+\begin{equation}
+    x_t =
+    \begin{bmatrix}
+    x_t^{(l)} \\
+    x_t^{(g)}
+    \end{bmatrix}.
+\end{equation}
+
+Here:
+\begin{itemize}
+    \item $x_t^{(l)}$ is a \textbf{local latent state}, such as hippocampal local neural state, local vascular state, or local circuit excitability.
+    \item $x_t^{(g)}$ is a \textbf{global latent state / internal environment / global order-parameter-like state}, such as global brain state, neuromodulatory state, brainstem-thalamic-cortical state, global vascular state, or arousal state.
+    \item $u_t$ is a \textbf{local LFP subprocess / local neural action}.
+\end{itemize}
+
+A generic nonlinear model can be written as
+\begin{align}
+    x_{t+1}^{(l)} &= F_l\!\left(x_t^{(l)}, x_t^{(g)}, u_t\right), \\
+    x_{t+1}^{(g)} &= F_g\!\left(x_t^{(g)}, x_t^{(l)}, u_t\right),
+\end{align}
+or more compactly:
+\begin{equation}
+    x_{t+1}=F(x_t,u_t).
+\end{equation}
+
+The key point is not that LFP is an external stimulus. Rather, $u_t$ is treated as an action-like subprocess of the local subsystem. It can be written as an input-like variable for modeling convenience, but in the closed-loop view it is generated internally by the system.
+
+\section{BOLD is a nonlinear readout, not the mechanism itself}
+
+Local BOLD and global BOLD are observable readouts of the latent state:
+\begin{align}
+    y_t^{(lB)} &= h_l\!\left(x_t^{(l)}, x_t^{(g)}\right), \\
+    y_t^{(gB)} &= h_g\!\left(x_t^{(l)}, x_t^{(g)}\right).
+\end{align}
+
+Therefore, local BOLD is not simply the output of a local HRF driven by local LFP. It may contain both a local and a global component:
+\begin{equation}
+    y_t^{(lB)} = \text{local component} + \text{global component}.
+\end{equation}
+
+This is crucial: if local BOLD reads out a global latent state before that state gates a future local LFP subprocess, local BOLD can show apparent pre-activation relative to LFP.
+
+\section{Global-to-local path: global state gates local LFP subprocesses}
+
+The central explanation for pre-activation is:
+\begin{equation}
+    x_t^{(g)} \rightarrow u_{\mathrm{LFP},t+\Delta}.
+\end{equation}
+
+More explicitly:
+\begin{equation}
+    x_t^{(g)} \rightarrow x_{t+\Delta}^{(l)} \rightarrow u_{\mathrm{LFP},t+\Delta}.
+\end{equation}
+
+This means that a global latent state / order-parameter-like variable appears first, then modulates the local hippocampal condition, making a local LFP subprocess more likely to occur.
+
+To form a complete closed loop, there may also be a local-to-global update:
+\begin{equation}
+    u_{\mathrm{LFP},t} \rightarrow x_{t+\Delta}^{(g)}.
+\end{equation}
+
+The overall loop can therefore be summarized as
+\begin{equation}
+    x^{(g)} \rightarrow u_{\mathrm{LFP}} \rightarrow x^{(g)}.
+\end{equation}
+
+However, for explaining \textbf{pre-activation}, the most important part is the first half:
+\begin{equation}
+    x^{(g)} \rightarrow u_{\mathrm{LFP}}.
+\end{equation}
+
+\section{Why local BOLD--LFP can produce an apparent non-causal IR}
+
+The standard feed-forward HRF model assumes:
+\begin{equation}
+    y_{\mathrm{localBOLD}}(t)
+    =
+    \sum_{\tau\ge 0} h(\tau) u_{\mathrm{LFP}}(t-\tau)+\epsilon(t).
+\end{equation}
+
+This treats LFP as an exogenous input and BOLD as a passive output. Under this assumption, if the estimated impulse response has negative-lag pre-activation, it appears non-causal.
+
+In the local-global latent model, a global state $x_t^{(g)}$ can simultaneously:
+\begin{enumerate}
+    \item be read out early by local BOLD:
+    \begin{equation}
+        x_t^{(g)} \rightarrow y_t^{(lB)},
+    \end{equation}
+    \item gate a future local LFP subprocess:
+    \begin{equation}
+        x_t^{(g)} \rightarrow u_{\mathrm{LFP},t+\Delta}.
+    \end{equation}
+\end{enumerate}
+
+Thus the observations may show
+\begin{equation}
+    y_{\mathrm{localBOLD},t}
+    \quad \text{preceding} \quad
+    u_{\mathrm{LFP},t+\Delta}.
+\end{equation}
+
+If one still applies a feed-forward LFP-to-BOLD deconvolution model, the resulting cross-kernel can show negative-lag pre-activation. This does \textbf{not} imply
+\begin{equation}
+    y_{\mathrm{localBOLD}} \rightarrow u_{\mathrm{LFP}}.
+\end{equation}
+Instead, it reflects the shared influence of a latent global state:
+\begin{equation}
+    x^{(g)} \rightarrow
+    \begin{cases}
+    y_{\mathrm{localBOLD}},\\
+    u_{\mathrm{LFP}}.
+    \end{cases}
+\end{equation}
+
+The apparent non-causality therefore arises when a closed-loop endogenous system is interpreted using an open-loop feed-forward model.
+
+\section{From nonlinear system to augmented autonomous system}
+
+If $u_t$ is generated internally, it can be written as
+\begin{equation}
+    u_t = \pi\!\left(x_t^{(g)}, x_t^{(l)}, u_{t-1},u_{t-2},\ldots\right)+\epsilon_t.
+\end{equation}
+
+By augmenting the state with $u_t$ and its history,
+\begin{equation}
+    s_t = \begin{bmatrix}
+    x_t \\
+    u_t \\
+    u_{t-1} \\
+    \vdots
+    \end{bmatrix},
+\end{equation}
+the closed-loop system can be written in autonomous form:
+\begin{equation}
+    s_{t+1}=F_{\mathrm{cl}}(s_t).
+\end{equation}
+
+The readouts can be written as
+\begin{align}
+    u_t &= C_u s_t, \\
+    y_t^{(lB)} &= C_l s_t, \\
+    y_t^{(gB)} &= C_g s_t.
+\end{align}
+
+This step is important because it shows that the local LFP subprocess, local BOLD, and global BOLD can all be treated as different readouts of the same autonomous closed-loop system.
+
+\section{Koopman modal representation}
+
+For the augmented autonomous system
+\begin{equation}
+    s_{t+1}=F_{\mathrm{cl}}(s_t),
+\end{equation}
+let $a_t$ denote Koopman eigenfunction coordinates. In modal coordinates:
+\begin{equation}
+    a_{t+1}=\Lambda a_t.
+\end{equation}
+
+The observables can be approximated as linear readouts:
+\begin{align}
+    u_{\mathrm{LFP},t}&=C_u a_t, \\
+    y_{\mathrm{localBOLD},t}&=C_l a_t, \\
+    y_{\mathrm{globalBOLD},t}&=C_g a_t.
+\end{align}
+
+The value of the Koopman representation is that the original latent dynamics and observation functions may be nonlinear, but in lifted/modal space the dominant modes, phase relationships, and spatial readouts can be analyzed linearly or approximately linearly.
+
+\section{Definition of pre-activation modes}
+
+For an LFP--BOLD anchor pair $(p,q)$:
+\begin{itemize}
+    \item $p$ denotes a local LFP band/subprocess, such as PGO, theta, or ripple.
+    \item $q$ denotes a local BOLD ROI or local BOLD readout.
+\end{itemize}
+
+If the empirical cross-kernel $h_{q,p}(\tau)$ shows pre-activation at $\tau<0$, we can identify Koopman modes that contribute to this negative-lag component.
+
+Define:
+\begin{equation}
+\mathcal I_{\mathrm{pre}}(q,p)
+=
+\{i: \text{mode } i \text{ contributes to the negative-lag component of pair }(q,p)\}.
+\end{equation}
+
+These are the \textbf{pre-activation modes} for the anchor pair.
+
+Biological interpretation:
+\begin{quote}
+These modes most naturally correspond to a global latent gating state / order-parameter-like variable. This global state is read out by BOLD before it gates future local LFP subprocesses.
+\end{quote}
+
+Important boundary:
+\begin{quote}
+Pre-activation modes are not causal modes. They are pair-conditioned modal signatures.
+\end{quote}
+
+\section{Koopman phase-lead explanation}
+
+For mode $i$, let the continuous-time eigenvalue be
+\begin{equation}
+    \nu_i = \alpha_i + \mathrm{i}\omega_i.
+\end{equation}
+
+The complex readout weights for LFP and local BOLD can be written as
+\begin{align}
+    C_u(i)&=|C_u(i)|e^{\mathrm{i}\phi_{u,i}}, \\
+    C_l(i)&=|C_l(i)|e^{\mathrm{i}\phi_{l,i}}.
+\end{align}
+
+If the BOLD readout phase leads the LFP readout phase, this mode contributes to apparent pre-activation in the LFP--BOLD cross-kernel. A phase-derived time difference can be written as
+\begin{equation}
+    \Delta t_{lB-u,i}
+    =
+    \frac{\operatorname{wrap}(\phi_{l,i}-\phi_{u,i})}{\omega_i},
+\end{equation}
+with the exact sign depending on the phase convention. Conceptually:
+\begin{equation}
+\text{BOLD phase leads LFP phase}
+\quad \Rightarrow \quad
+\text{negative-lag contribution in empirical IR}.
+\end{equation}
+
+\section{Meaning of the global ROI map}
+
+For the pre-activation modes of an anchor pair $(q,p)$, define the global ROI map as
+\begin{equation}
+M_{q,p}(r)
+=
+\sum_{i\in\mathcal I_{\mathrm{pre}}(q,p)} s_i |C_g(r,i)|,
+\end{equation}
+where:
+\begin{itemize}
+    \item $r$ is a global BOLD ROI.
+    \item $C_g(r,i)$ is the global BOLD readout weight of mode $i$ at ROI $r$.
+    \item $s_i$ is the strength with which mode $i$ contributes to the pair-specific pre-activation, for example negative-lag area, mode amplitude, or pairwise mode weight.
+\end{itemize}
+
+Interpretation:
+\begin{quote}
+The global ROI map is the spatial footprint of the pre-activation modes in whole-brain BOLD ROI space.
+\end{quote}
+
+In the closed-loop / slaving-principle interpretation, it further corresponds to:
+\begin{quote}
+the BOLD-observable footprint of the global latent state / order-parameter-like variable that gates the local LFP subprocess.
+\end{quote}
+
+It is \textbf{not} a causal map of BOLD ROIs driving LFP. It is a map of which ROIs jointly express the global gating state.
+
+\section{Meaning of the loop backbone}
+
+For the same pre-activation modes, each ROI readout has both amplitude and phase:
+\begin{equation}
+    C_g(r,i)=|C_g(r,i)|e^{\mathrm{i}\phi_{r,i}}.
+\end{equation}
+
+The global ROI map uses the amplitude:
+\begin{equation}
+    |C_g(r,i)|,
+\end{equation}
+whereas the loop backbone uses the phase:
+\begin{equation}
+    \phi_{r,i}.
+\end{equation}
+
+Thus:
+\begin{quote}
+The global ROI map describes where the global state is expressed. The loop backbone describes how that global state is phase-expressed across ROIs.
+\end{quote}
+
+For each mode, one may define a phase-based adjacency:
+\begin{equation}
+A_i(r_1,r_2)=1
+\quad \text{if ROI } r_1 \text{ phase-leads ROI } r_2
+\quad \text{within mode } i.
+\end{equation}
+
+Aggregating over pre-activation modes gives
+\begin{equation}
+A_{q,p}^{\mathrm{backbone}}(r_1,r_2)
+=
+\sum_{i\in\mathcal I_{\mathrm{pre}}(q,p)} s_i A_i(r_1,r_2).
+\end{equation}
+
+The loop backbone is interpreted as:
+\begin{quote}
+the phase-ordered expression, or phase portrait, of the global gating state in ROI space.
+\end{quote}
+
+It is a candidate biological representation / phenomenological modal signature. It is not the anatomical feedback loop itself, and it does not by itself establish interventional causality.
+
+\section{Relation to Haken's slaving principle}
+
+This framework can be related to Haken's slaving principle:
+\begin{equation}
+\text{distributed brain regions}
+\Rightarrow
+\text{global order parameter}
+\Rightarrow
+\text{local fast subprocess}.
+\end{equation}
+
+In the current setting:
+\begin{equation}
+\text{distributed ROI-level activity}
+\Rightarrow
+x^{(g)}
+\Rightarrow
+u_{\mathrm{LFP}}.
+\end{equation}
+
+Here:
+\begin{itemize}
+    \item $x^{(g)}$ is a global order-parameter-like state / slaving variable.
+    \item The global ROI map is the spatial BOLD footprint of $x^{(g)}$.
+    \item The loop backbone is the phase portrait of $x^{(g)}$ across ROIs.
+    \item The local LFP subprocess is the fast local process gated or enslaved by $x^{(g)}$.
+\end{itemize}
+
+This also forms a kind of circular causality:
+\begin{equation}
+\text{distributed global state}
+\rightarrow
+\text{local LFP subprocess}
+\rightarrow
+\text{global state update}.
+\end{equation}
+
+\section{Relationship to the two projects}
+
+\subsection{Project 1: Event-related LFP subprocess $\to$ global BOLD pattern / BOLD eigenfunction residual}
+
+This project corresponds to the local-to-global path:
+\begin{equation}
+    u_{\mathrm{LFP}} \rightarrow x^{(g)} \rightarrow y_{\mathrm{globalBOLD}}.
+\end{equation}
+
+Operationally, one first builds a BOLD-only Koopman model:
+\begin{equation}
+    b_{k+1}=\Lambda_B b_k + \eta_k^B,
+\end{equation}
+where the BOLD modal innovation / BOLD eigenfunction residual is
+\begin{equation}
+    \eta_k^B=b_{k+1}-\Lambda_B b_k.
+\end{equation}
+
+The high-rate LFP subprocesses are then converted to the BOLD time scale as density variables:
+\begin{equation}
+D_r^{\mathrm{LFP}}[k]
+=
+\text{density / occupancy of LFP subprocess } r
+\text{ in BOLD window } k.
+\end{equation}
+
+The core predictive model is
+\begin{equation}
+\eta_{m,k}^B
+=
+\sum_r\sum_{\ell}
+\beta_{m,r,\ell}D_r^{\mathrm{LFP}}[k-\ell]
++
+\epsilon_{m,k}.
+\end{equation}
+
+If $D_r^{\mathrm{LFP}}$ predicts future $\eta^B$, then:
+\begin{quote}
+the local LFP subprocess acts as an intrinsic perturbation that triggers or predicts global BOLD modal innovations.
+\end{quote}
+
+Important boundary:
+\begin{quote}
+The BOLD residual itself is not the LFP subprocess activation. It is an input-like deviation of BOLD modal dynamics. It supports the LFP-subprocess-as-intrinsic-perturbation interpretation only if it is predicted by LFP subprocess density.
+\end{quote}
+
+\subsection{Project 2: Non-causal LFP--BOLD IR / pre-activation}
+
+This project corresponds to the global-to-local path:
+\begin{equation}
+    x^{(g)} \rightarrow u_{\mathrm{LFP}}.
+\end{equation}
+
+The proposed sequence is:
+\begin{enumerate}
+    \item A global latent state $x^{(g)}$ appears first.
+    \item Local BOLD reads out a local/global mixture that includes $x^{(g)}$.
+    \item The same $x^{(g)}$ gates a future local LFP subprocess.
+    \item Therefore a feed-forward LFP-to-local-BOLD IR can show apparent pre-activation.
+\end{enumerate}
+
+In the Koopman analysis:
+\begin{itemize}
+    \item The anchor pair $(q,p)$ selects the pre-activation modes $\mathcal I_{\mathrm{pre}}(q,p)$.
+    \item The global ROI map $M_{q,p}(r)$ is the spatial footprint of these modes.
+    \item The loop backbone $A_{q,p}^{\mathrm{backbone}}$ is their phase-ordered expression across ROIs.
+\end{itemize}
+
+This project argues:
+\begin{quote}
+BOLD pre-activation is not reverse neurovascular causality. It is a phenomenological modal signature of a global gating state that precedes and organizes local LFP subprocesses.
+\end{quote}
+
+\section{Integrated closed-loop interpretation}
+
+The two projects correspond to two halves of the same closed loop:
+
+\begin{longtable}{p{0.28\textwidth}p{0.32\textwidth}p{0.32\textwidth}}
+\toprule
+\textbf{Path} & \textbf{Project} & \textbf{Interpretation} \\
+\midrule
+$u_{\mathrm{LFP}} \rightarrow x^{(g)}$ & Event-related LFP subprocess $\to$ BOLD innovation & Local subprocess perturbs / updates global BOLD modal state \\
+$x^{(g)} \rightarrow u_{\mathrm{LFP}}$ & Non-causal IR / pre-activation & Global gating state precedes and gates local LFP subprocess \\
+\bottomrule
+\end{longtable}
+
+Together:
+\begin{equation}
+    x^{(g)} \rightarrow u_{\mathrm{LFP}} \rightarrow x^{(g)}.
+\end{equation}
+
+In words:
+\begin{quote}
+A global order-parameter-like state gates local hippocampal subprocesses, and local subprocesses in turn perturb or update the global BOLD network state.
+\end{quote}
+
+This closed-loop local-global self-organization is the shared mechanistic interpretation of the two projects.
+
+\section{Interpretation boundaries}
+
+The framework should be stated carefully:
+\begin{itemize}
+    \item A \textbf{pre-activation mode} is not a causal mode; it is a pair-conditioned modal signature.
+    \item A \textbf{global ROI map} is not a causal feedback map; it is the spatial footprint of pre-activation modes.
+    \item A \textbf{loop backbone} is not an anatomical feedback loop; it is the phase-ordered expression of a global gating state in ROI space.
+    \item The whole interpretation is phenomenological but mechanistically informative.
+\end{itemize}
+
+A concise manuscript-friendly formulation is:
+\begin{quote}
+Pre-activation modes identify a global order-parameter-like state associated with an LFP--BOLD anchor pair. The global ROI map describes where this state is expressed in BOLD space, while the loop backbone describes how that state is phase-expressed across ROIs. These objects are phenomenological modal signatures of a latent feedback/slaving process, rather than direct anatomical or interventional feedback pathways.
+\end{quote}
+
+\end{document}

@@ -10,6 +10,9 @@ For each topN it summarizes pairwise ROI profile similarity, top ROI-set
 overlap, and selected BOLD unit overlap. P8 selected-mode overlap is
 interpretable because it refers to sorted P7 BOLD modes. P10 overlap is kept as
 QC only, because efun and deconv_efun P9 components live in separate bases.
+
+The current ROI mainline default is signed real_mean only. Other ROI value
+modes are available as legacy/QC checks via --roi-value-modes.
 """
 
 from __future__ import annotations
@@ -79,11 +82,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--datasets", nargs="+", default=list(signed_base.DATASETS))
     parser.add_argument("--top-ns", nargs="+", type=int, default=list(TOP_NS))
     parser.add_argument("--top-rois", type=int, default=TOP_ROIS)
+    parser.add_argument(
+        "--roi-value-modes",
+        "--roi-value-mode",
+        dest="roi_value_modes",
+        nargs="+",
+        choices=signed_base.ALL_ROI_VALUE_MODES,
+        default=list(ROI_VALUE_MODES),
+        help=(
+            "ROI profile value modes to compute. The current mainline default is "
+            "real_mean; mean_abs/positive_real/negative_real are legacy/QC modes."
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
+    global ROI_VALUE_MODES
     args = parse_args()
+    ROI_VALUE_MODES = tuple(args.roi_value_modes)
+    signed_base.ROI_VALUE_MODES = ROI_VALUE_MODES
     args.output_dir.mkdir(parents=True, exist_ok=True)
     args.figure_dir.mkdir(parents=True, exist_ok=True)
 

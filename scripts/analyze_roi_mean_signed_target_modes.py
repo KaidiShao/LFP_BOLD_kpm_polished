@@ -9,8 +9,10 @@ found too coarse:
    deconv_efun x ripple_gamma_no_theta?
 
 2. Signed ROI / top ROI set:
-   Do those two targets differ when ROI profiles are represented as
-   mean_abs, signed real_mean, positive real part, and negative real part?
+   Do those two targets differ when ROI profiles are represented as signed
+   real_mean?  mean_abs/positive_real/negative_real remain available as
+   legacy/QC modes through --roi-value-modes, but the mainline default is
+   real_mean only.
 
 Scope is the current standardized complex-split roi_mean SOP.
 """
@@ -55,7 +57,8 @@ TARGETS = {
     "deconv_rg": ("deconv_efun", "ripple_gamma_no_theta"),
 }
 TARGET_PAIR = ("efun_theta", "deconv_rg")
-ROI_VALUE_MODES = ("mean_abs", "real_mean", "positive_real", "negative_real")
+ALL_ROI_VALUE_MODES = ("mean_abs", "real_mean", "positive_real", "negative_real")
+ROI_VALUE_MODES = ("real_mean",)
 TOP_NS = (5, 10, 20)
 MAIN_TOP_N = 10
 TOP_ROIS = 10
@@ -99,11 +102,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-ns", nargs="+", type=int, default=list(TOP_NS))
     parser.add_argument("--main-top-n", type=int, default=MAIN_TOP_N)
     parser.add_argument("--top-rois", type=int, default=TOP_ROIS)
+    parser.add_argument(
+        "--roi-value-modes",
+        "--roi-value-mode",
+        dest="roi_value_modes",
+        nargs="+",
+        choices=ALL_ROI_VALUE_MODES,
+        default=list(ROI_VALUE_MODES),
+        help=(
+            "ROI profile value modes to compute. The current mainline default is "
+            "real_mean; mean_abs/positive_real/negative_real are legacy/QC modes."
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> None:
+    global ROI_VALUE_MODES
     args = parse_args()
+    ROI_VALUE_MODES = tuple(args.roi_value_modes)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     args.figure_dir.mkdir(parents=True, exist_ok=True)
     datasets = {d.lower() for d in args.datasets}

@@ -25,6 +25,23 @@ desktop.ini
 matlab_*_probe.txt
 tmp_*.pyc.*
 
+# Runtime state / process markers.
+*.pid
+*.winpid
+*.exit
+*.lock
+
+# ML/checkpoint shards.
+*.data-00000-of-00001
+*.index
+checkpoint
+checkpoint_*
+
+# MATLAB / scientific scratch outputs.
+*.fig
+*.npz
+matlab_crash_dump.*
+
 # Accidental Windows absolute-path spillover directories.
 /D*/Onedrive/
 /D*Onedrive*/

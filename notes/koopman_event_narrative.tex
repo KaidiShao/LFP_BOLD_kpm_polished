@@ -1,0 +1,259 @@
+% !TEX program = xelatex
+\documentclass[11pt,a4paper]{ctexart}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\hypersetup{colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue}
+
+\title{用 Koopman Eigenfunction 定义海马瞬态事件：\
+从频段标签到内在时间尺度子过程}
+\author{Narrative draft}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+传统海马 LFP 瞬态事件通常由预设频段定义，例如 theta、gamma、ripple 或 sharp wave-ripple (SPW-R)。这种定义保留了事件的振荡频率信息，但不足以解释 gamma 与 ripple 的共现、SPW-R 与 isolated ripple 的关系，以及 mixed-frequency transient events 的动力学结构。本文提出一个 Koopman 解释：频段可以看作 Koopman 连续时间指数的虚部，即振荡内容；而事件的持续性、衰减、转瞬性、状态依赖和子过程结构，则由 Koopman 指数的实部，或离散时间特征值模长，所刻画。因此，事件不应被定义为单一频段，而应被定义为低维 Koopman eigenfunction 子过程空间中的重复短轨迹 motif。该解释保留并扩展传统频段理论，同时为后续 LFP subprocess density 预测 BOLD modal innovation 提供理论基础。
+\end{abstract}
+
+\section{核心观点}
+
+本文的中心叙事是：
+\begin{quote}
+\textbf{Frequency bands describe the oscillatory signature of hippocampal events, whereas Koopman eigenfunction clusters describe the intrinsic dynamical subprocesses that generate those signatures. Classical events such as theta, gamma, ripple, and SPW-R are recurrent trajectory motifs in a low-dimensional space of Koopman subprocesses.}
+\end{quote}
+
+也就是说，本文并不试图推翻 theta、gamma、ripple 等传统频段标签。相反，这些标签可以被嵌入到一个更完整的 Koopman spectral representation 中。传统频段主要描述 Koopman mode 的振荡部分，而 Koopman eigenfunctions 进一步提供事件的内在时间尺度、持续性、衰减和状态转移结构。
+
+\section{为什么单纯用频段定义事件不够}
+
+经典做法通常将海马瞬态事件定义为特定频段能量的增强。例如：
+\begin{itemize}[leftmargin=2em]
+    \item theta：低频慢振荡；
+    \item gamma：中高频振荡；
+    \item ripple：高频振荡；
+    \item SPW-R：sharp wave 与 ripple 的复合事件。
+\end{itemize}
+
+这种定义有清晰的生理和文献基础，但它把事件简化成了人为指定频段的 power feature。实际数据中，几个现象说明这种定义并不充分：
+\begin{enumerate}[leftmargin=2em]
+    \item gamma 和 ripple 经常共同出现，因此它们未必是两个互斥事件类别；
+    \item isolated ripple 与 SPW-R 共享高频 ripple 成分，但 SPW-R 还包含 slow sharp-wave 成分；
+    \item 一个事件可能同时包含多个频率成分，因此单一频段难以描述其完整动力学；
+    \item 一个 transient event 可能更像是 state transition 或 trajectory motif，而不只是某个时间点的 spectral peak。
+\end{enumerate}
+
+因此，频段标签描述了事件的振荡 signature，但没有完整定义产生该 signature 的 dynamical subprocess。
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.95\textwidth]{koopman_events_multiregion.png}
+\caption{多通道 LFP 中的传统频段事件与 Koopman eigenfunction state motifs。传统标签如 theta、gamma 和 ripple 由频谱内容定义，但事件之间存在共现和复合关系。Koopman eigenfunctions 提供了一个基于多通道动态状态的替代定义。}
+\end{figure}
+
+\section{NMF 的贡献与局限}
+
+Band-free spectral decomposition，例如 NMF，是对固定频段定义的重要推进。NMF 将 spectrogram 分解为若干 data-driven spectral profiles：
+\begin{equation}
+S(f,t) \approx \sum_{k=1}^{K} W_k(f) H_k(t),
+\end{equation}
+其中 $W_k(f)$ 表示 spectral profile，$H_k(t)$ 表示该 profile 随时间的贡献。
+
+这种方法的重要优点是：它不需要预先指定 theta/gamma/ripple 等频段，可以发现 mixed-frequency patterns。例如 SPW-R 可以被识别为 low-frequency sharp wave 与 high-frequency ripple 的复合事件。这说明 NMF 已经从 fixed-band analysis 推进到了 data-driven spectral profile analysis。
+
+但是，NMF component 仍主要是 \textbf{spectral factor}，而不是 \textbf{dynamical state variable}。它告诉我们：
+\begin{quote}
+这个 transient 的频谱形状是什么？
+\end{quote}
+但它并不自然回答：
+\begin{quote}
+这个 transient 属于哪个内在动力学子过程？它如何持续、衰减、转移，或者与其他子过程共同激活？
+\end{quote}
+
+因此，本文的定位不是否定 NMF，而是将其进一步推进：
+\begin{equation}
+\text{frequency band}
+\quad\longrightarrow\quad
+\text{spectral profile}
+\quad\longrightarrow\quad
+\text{dynamical subprocess}.
+\end{equation}
+
+\section{Koopman eigenvalue 同时编码频率与时间尺度}
+
+在连续时间 Koopman generator 表示中，一个 eigenfunction $\phi_i$ 沿轨迹满足：
+\begin{equation}
+\phi_i(x_t) \sim e^{\nu_i t},
+\qquad
+\nu_i = \alpha_i + i\omega_i.
+\end{equation}
+其中：
+\begin{itemize}[leftmargin=2em]
+    \item $\omega_i = \operatorname{Im}(\nu_i)$ 编码振荡频率；
+    \item $\alpha_i = \operatorname{Re}(\nu_i)$ 编码增长、衰减、持续性和内在时间尺度。
+\end{itemize}
+
+在离散时间 EDMD/Koopman 表示中，特征值通常写作：
+\begin{equation}
+\mu_i = \rho_i e^{i\theta_i}.
+\end{equation}
+如果采样间隔为 $\Delta t$，则可转换为连续时间指数：
+\begin{equation}
+\nu_i = \frac{\log \mu_i}{\Delta t}
+= \frac{\log \rho_i}{\Delta t} + i\frac{\theta_i}{\Delta t}.
+\end{equation}
+因此：
+\begin{equation}
+\alpha_i = \frac{\log \rho_i}{\Delta t},
+\qquad
+\omega_i = \frac{\theta_i}{\Delta t}.
+\end{equation}
+一个衰减时间尺度可以定义为：
+\begin{equation}
+\tau_i^{\mathrm{decay}} = -\frac{1}{\alpha_i}
+= -\frac{\Delta t}{\log \rho_i},
+\qquad \alpha_i < 0.
+\end{equation}
+
+因此，传统频段主要对应 $\omega_i$，而本文关注的 subprocess 更依赖 $\alpha_i$ 或 $\rho_i$ 所刻画的 persistence / decay / timescale。
+
+\section{Subprocess 应该是 eigenfunction timescale cluster，而不是单个 eigenfunction}
+
+真实数据中不应将单个 eigenfunction 直接解释为一个生物事件。更稳妥的定义是：
+\begin{quote}
+\textbf{一个 Koopman subprocess 是一组具有相似 eigenvalue timescale、相似 activation pattern、并参与相似 event trajectory motifs 的 eigenfunctions。}
+\end{quote}
+
+形式上，可以定义一个 eigenfunction cluster：
+\begin{equation}
+\mathcal P_r = \{i : \tau_i \text{ similar},\; \mathrm{activation}_i \text{ similar},\; \mathrm{trajectory}_i \text{ similar} \}.
+\end{equation}
+相应的 subprocess activity 可写作：
+\begin{equation}
+S_r(t) = \left(\sum_{i\in\mathcal P_r} w_i |\phi_i(x_t)|^2\right)^{1/2}.
+\end{equation}
+
+这样，降维后的 Koopman eigenfunction 表示不是任意可视化，而是高维 eigenfunctions 中冗余 timescale 信息的低维总结。
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.95\textwidth]{koopman_lowdim_event_states.png}
+\caption{低维 Koopman eigenfunction representation 作为 event-related brain state space。高维 eigenfunctions 包含相似时间尺度的冗余信息；经过降维后，theta、gamma、SPW-R、isolated ripple 和 baseline 在低维空间中形成具有结构的轨迹分布。}
+\end{figure}
+
+\section{事件是 Koopman subprocess space 中的短轨迹 motif}
+
+本文建议将 transient event 定义为：
+\begin{quote}
+\textbf{a recurrent short trajectory motif in a low-dimensional Koopman subprocess space.}
+\end{quote}
+
+设低维 subprocess coordinate 为：
+\begin{equation}
+z(t) = [S_1(t), S_2(t), \ldots, S_R(t)].
+\end{equation}
+一个事件不是单点 $z(t)$，而是一个短轨迹片段：
+\begin{equation}
+z(t:t+L).
+\end{equation}
+
+这种定义可以自然解释传统事件之间的关系：
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+传统事件 & Koopman 解释 & 动力学含义 \\
+\midrule
+Theta & slow subprocess motif & 慢状态或慢 regime axis \\
+Gamma & fast subprocess activation & fast transition / burst axis \\
+Ripple & high-frequency fast subprocess & 强 fast activation \\
+Isolated ripple & fast subprocess only & 缺少 slow sharp-wave component \\
+SPW-R & slow + fast compound motif & slow sharp-wave subprocess 与 fast ripple subprocess 协同激活 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+因此，SPW-R 与 isolated ripple 并不是完全无关的两个事件。它们共享 fast ripple subprocess，但 SPW-R 额外包含 slow sharp-wave subprocess。这解释了为什么传统频段会看到复杂共现结构。
+
+\section{与 neural mass model 的对应}
+
+这一解释与 bi-state neural mass model 非常一致。在该模型中，ground truth 包含：
+\begin{itemize}[leftmargin=2em]
+    \item metastable State 0；
+    \item metastable State 1；
+    \item state transition；
+    \item transition 过程中的 fast oscillation。
+\end{itemize}
+
+Koopman eigenfunctions 可以分别捕捉这些结构：metastable states、transition path 和 fast oscillations。这说明 Koopman eigenfunctions 不是任意 feature，而是能够在已知动力系统中分离 state、transition 和 oscillatory subprocess 的坐标。
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=0.9\textwidth]{koopman_neural_mass_model.png}
+\caption{Bi-state neural mass model 中 Koopman eigenfunctions 对 state、transition 和 oscillation 的分离。该模型提供 proof-of-concept：当系统确实包含 metastable states、state transitions 和 transition-related oscillations 时，Koopman eigenfunctions 能够将它们分离成可解释的 latent coordinates。}
+\end{figure}
+
+真实海马 LFP 的对应关系可以写作：
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Neural mass model & Hippocampal LFP interpretation \\
+\midrule
+Metastable state & baseline / theta-like slow regime \\
+Transition eigenfunction & sharp-wave / event onset subprocess \\
+Fast oscillatory eigenfunction & gamma/ripple fast subprocess \\
+Trajectory in eigenfunction space & transient event motif \\
+State transition + oscillation & SPW-R / gamma-ripple compound event \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{与后续 LFP--BOLD 课题的关系}
+
+这个 event definition 是后续 LFP--BOLD 课题的前置问题。首先需要证明：
+\begin{equation}
+\text{LFP Koopman subprocess density}
+\quad\rightarrow\quad
+\text{BOLD modal innovation}.
+\end{equation}
+
+将高采样率 LFP 映射到 BOLD 时间尺度时，可以定义三种 density：
+\begin{enumerate}[leftmargin=2em]
+    \item frequency-defined event density；
+    \item raw LFP eigenfunction activation density；
+    \item dimension-reduced LFP eigenfunction subprocess density。
+\end{enumerate}
+
+如果第三种 density 最能预测 BOLD modal innovation，则说明真正与全局 BOLD network reorganization 相关的不是单一频段 event，也不是高维 eigenfunction 噪声，而是低维 Koopman-defined hippocampal subprocess。
+
+\section{可验证预测}
+
+该叙事产生几个清楚的预测：
+\begin{enumerate}[leftmargin=2em]
+    \item Koopman eigenfunction clusters 应显示不同 decay / persistence / autocorrelation timescales；
+    \item manual event labels 在低维 Koopman subprocess space 中不应完全互斥，而应表现为 overlapping trajectory motifs；
+    \item gamma 和 ripple 应共享 fast subprocess axis；
+    \item SPW-R 应表现为 slow subprocess 与 fast subprocess 的复合轨迹；
+    \item dimension-reduced Koopman subprocess density 应比 frequency-band density 或 NMF component density 更好地预测 BOLD modal innovation；
+    \item 在 neural mass model 等有 ground truth 的系统中，Koopman eigenfunctions 应能分离 state、transition 和 oscillation。
+\end{enumerate}
+
+\section{推荐表述}
+
+\begin{quote}
+Classical hippocampal events are usually defined by power in predefined frequency bands, such as theta, gamma and ripple. This convention captures the oscillatory frequency of an event, but it does not fully define its underlying dynamical subprocess. In Koopman theory, oscillatory frequency corresponds to the imaginary part of the continuous-time Koopman exponent, whereas persistence, decay and intrinsic timescale are encoded by the real part, or equivalently by the modulus of the discrete-time eigenvalue. Thus, frequency-band labels can be viewed as projections of a richer modal description. We therefore define events not by single frequency bands, but as recurrent short trajectory motifs in a low-dimensional space of Koopman eigenfunction clusters. Under this view, theta reflects a slow subprocess, gamma and ripple reflect fast subprocesses, and sharp-wave ripples correspond to compound motifs involving coordinated activation of slow and fast subprocesses.
+\end{quote}
+
+\section{References and source notes}
+
+\begin{itemize}[leftmargin=2em]
+    \item Besserve, Safavi, Schölkopf, and Logothetis, \emph{The complex spectral structure of transient LFPs reveals subtle aspects of network coordination across scales and structures}. This work motivates band-free decomposition of transient LFPs and shows that SPW-R is a compound low-frequency and high-frequency event.
+    \item Shao, Annual Meeting 2025, \emph{Peering into Intrinsic Brain Dynamics with the Koopman Operator}. Slides 7--8 motivate Koopman eigenfunctions as event-related state coordinates and low-dimensional summaries of redundant intrinsic timescale information.
+    \item Bi-state neural mass model example from the annual meeting material. The model illustrates how Koopman eigenfunctions can separately capture metastable states, transitions and fast oscillations.
+\end{itemize}
+
+\end{document}
